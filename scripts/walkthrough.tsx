@@ -58,6 +58,12 @@ async function click(needle: string, tag = 'button', label = needle) {
   await act(async () => { el.click(); await sleep(80) })
   return true
 }
+/** Poll the rendered app until a condition holds, for async pipelines. */
+async function waitFor(pred: () => boolean, ms = 20000) {
+  const t0 = Date.now()
+  while (!pred() && Date.now() - t0 < ms) await act(async () => { await sleep(120) })
+  return pred()
+}
 /** Click the dialogue overlay until the scene leaves the dialogue phase. */
 async function runDialogue(limit = 14) {
   for (let i = 0; i < limit; i++) {
@@ -140,6 +146,7 @@ ok(has('EPISODE 01'), 'HUD shows episode code')
 ok(has('THE INBOX'), 'act progress rail')
 ok(has('HELIX DYNAMICS'), 'opening title card')
 ok(has('Day one. Badge works') || has('Day one'), 'first subtitle line rendered')
+ok(has('procedural previs · not AI-generated'), 'visual tier labelled — no video key, so procedural previs, never passed off as AI video')
 let sawSpeaker = false
 for (let i = 0; i < 14; i++) {
   const overlay = document.querySelector<HTMLElement>('.absolute.inset-0.z-20.flex.cursor-pointer')
@@ -153,9 +160,9 @@ ok(sawSpeaker, 'character speaker labels appeared during the scene')
 
 console.log('\n=== 4. RISK TERMINAL ===')
 ok(has('MAKE YOUR CALL'), 'wager terminal opened before the decision')
-ok(has('estimate'), 'model estimate shown')
+ok(has('1.2×') && has('2×') && has('4×'), 'three fixed bets: SAFE 1.2× · RISKY 2× · ALL IN 4×')
 ok(has('no real money'), 'virtual-currency disclaimer present')
-ok(has('model inputs'), 'estimate is explained by mastery inputs')
+ok(!has('estimate'), 'the mastery estimate stays hidden until the world reacts')
 await click('RISKY')
 await flush(150)
 
@@ -174,6 +181,7 @@ ok(has('THREAT CONTAINED'), 'consequence banner for the strong choice')
 ok(has('what actually happened'), 'lesson revealed after the world reacted')
 ok(has('K-PHI-01'), 'citation chips')
 ok(has('BEAT THE HOUSE') || has('HOUSE'), 'wager settled')
+ok(has('RISKY 2×') && has('mastery model had you at'), 'bet settles on the authored outcome, then reveals the mastery estimate')
 ok(has('talk to Summer'), 'character chat offered')
 
 console.log('\n=== 7. CHARACTER CHAT (text) ===')
@@ -211,6 +219,9 @@ await click('inspect')
 await flush(120)
 ok(has('retrieved context'), 'retrieval inspector opens')
 ok(has('system prompt sent to the model'), 'prompt is inspectable')
+ok(has('REFUSED ·'), 'inspector classifies the off-topic reply as refused')
+ok(has('under the 30% floor'), 'the refusal is explained against the confidence floor')
+ok(has('rules used') && has('none — no policy asserted'), 'a refusal used no rules')
 await click('voice')
 await flush(120)
 ok(has('mic → stt → rag → llm → tts'), 'voice pipeline shown')
@@ -226,7 +237,7 @@ await flush(250)
 await runDialogue()
 await flush(150)
 ok(has('MAKE YOUR CALL'), 'act 2 wager')
-await click('decide without staking')
+await click('no bet')
 await flush(150)
 ok(has('THE EXPORT') || has('WHAT DO YOU DO?'), 'act 2 decision')
 await click('Helix Assist')
@@ -293,6 +304,9 @@ await act(async () => { await sleep(900) })
 await flush(300)
 ok(has('what changes next'), 'next-episode plan rendered')
 ok(has('what the system learned about you'), 'mastery movement')
+ok(has('behaviour under pressure'), 'run telemetry panel')
+ok(has('external threats') && has('coworker requests'), 'accuracy split by threat source')
+ok(has('bet like') || has('no bets placed'), 'wager calibration read')
 const scoreEl = [...document.querySelectorAll('div')].map((d) => d.textContent ?? '').find((t) => /^\d{1,3}$/.test(t.trim()))
 console.log('    score shown: ' + (scoreEl ?? '?').trim())
 
@@ -308,11 +322,60 @@ await click('episodes')
 await flush(200)
 await click('studio')
 await flush(300)
-ok(has('create an episode'), 'studio screen')
+ok(has('BORING MATERIAL'), 'studio screen')
 ok(has('Helix Security Handbook'), 'source documents listed')
-ok(has('source material') && has('episode setup'), 'authoring workflow sections')
-ok(!!findByText('generate episode'), 'episode generation can be run')
-ok(has('advanced') && has('authoring stub'), 'technical detail kept behind advanced')
+ok(has('KNOWLEDGE AGENT') && has('SCENARIO GENERATOR'), 'pipeline diagram')
+ok(has('run knowledge agent'), 'pipeline can be run')
+ok(has('video generation'), 'video authoring boundary documented')
+
+console.log('\n=== 11b. STUDIO: KNOWLEDGE → EPISODE → ASSETS → PUBLISH → PLAY ===')
+await click('run knowledge agent')
+ok(await waitFor(() => has('14 knowledge items') && has('run knowledge agent')), 'knowledge agent extracted 14 citable rules')
+await click('Workplace safety')
+await click('generate episode')
+ok(await waitFor(() => has('will not invent policy'), 8000), 'a topic the material does not cover is refused, not improvised')
+await click('Phishing')
+await click('generate episode')
+ok(await waitFor(() => has('validated · playable'), 10000), 'generated graph validated and playable')
+ok(has('script · deterministic composer'), 'offline script source labelled honestly')
+ok(has('MADE FOR YOU') && has('adaptive'), 'graph review shows the adaptive act')
+ok(has('mastery targets'), 'mastery targets shown')
+await click('generate visual assets')
+ok(await waitFor(() => has('re-render visual assets'), 8000), 'visual asset pass completed')
+ok(has('procedural previs') && !has('ai generated · stored'), 'no video key: every clip is procedural previs, none claims to be AI')
+await click('generate voice')
+ok(await waitFor(() => has('runtime voice'), 8000), 'voice pass reports runtime synthesis without an ElevenLabs key')
+await click('generate cinematic video')
+ok(await waitFor(() => has('re-render cinematic video'), 8000), 'cinematic video pass completed')
+ok(
+  [...document.querySelectorAll('[data-asset-row^="video:"]')].length === 4 &&
+    [...document.querySelectorAll('[data-asset-row^="video:"]')].every((r) => (r.textContent ?? '').includes('procedural previs')),
+  'no video key: all four clips are procedural previs, none claims to be AI video',
+)
+const lensScenes = [...document.querySelectorAll('[data-lens-scene]')].map((e) => e.getAttribute('data-lens-scene'))
+ok(lensScenes.length === 2 && lensScenes[0] !== lensScenes[1], `player A and B get different act threes (${lensScenes.join(' / ')})`)
+await click('publish episode')
+await flush(150)
+ok(has('shelf · every employee'), 'episode published')
+await click('play it')
+await flush(250)
+ok(has('generated episode') && has('validated graph'), 'intro shows generated provenance')
+await click('start episode')
+await flush(250)
+await runDialogue()
+await flush(150)
+if (has('MAKE YOUR CALL')) { await click('no bet'); await flush(150) }
+const genChoice = document.querySelector<HTMLElement>('button.choice')
+ok(!!genChoice, 'generated decision rendered')
+if (genChoice) await act(async () => { genChoice.click(); await sleep(200) })
+await flush(250)
+await runDialogue()
+await flush(150)
+ok(has('what actually happened') && has('K-'), 'generated consequence teaches with citations')
+const exitBtn = document.querySelector<HTMLElement>('button[aria-label="Exit episode"]')
+if (exitBtn) await act(async () => { exitBtn.click(); await sleep(200) })
+await flush(300)
+ok(has("generated from your company's material"), 'the published episode sits on the home shelf')
 
 console.log('\n=== 12. SECOND RUN: THE FAILURE BRANCHES ===')
 await click('profile')                // reset lives on the profile screen
@@ -339,7 +402,7 @@ await click('continue')
 await flush(250)
 await runDialogue()
 await flush(150)
-if (has('MAKE YOUR CALL')) { await click('decide without staking'); await flush(150) }
+if (has('MAKE YOUR CALL')) { await click('no bet'); await flush(150) }
 await click('Paste the export into the external AI tool')
 await flush(250)
 await runDialogue()
@@ -366,7 +429,7 @@ await click('continue')
 await flush(250)
 await runDialogue()
 await flush(150)
-if (has('MAKE YOUR CALL')) { await click('decide without staking'); await flush(150) }
+if (has('MAKE YOUR CALL')) { await click('no bet'); await flush(150) }
 await click('Tell him to let it go')
 await flush(250)
 await runDialogue()
@@ -386,7 +449,12 @@ const m = body().match(/final score(\d{1,3})/i)
 console.log('    score shown: ' + (m ? m[1] : '?'))
 ok(!!m && Number(m[1]) < 35, 'bad run scores low')
 
-console.log('\n=== 13. SHOP ===')
+console.log('\n=== 13. THE LOOP: NEXT EPISODE FROM THE WEAKNESS ===')
+await click('generate my next episode')
+ok(await waitFor(() => has('generated episode'), 8000), 'results generated a new episode from the weakest area and opened it')
+ok(has('personalised before you start'), 'the new episode is adaptive too')
+
+console.log('\n=== 14. SHOP ===')
 const card = (name: string) =>
   [...document.querySelectorAll<HTMLElement>('article')].find((a) => a.querySelector('h3')?.textContent === name) ?? null
 const cardText = (name: string) => card(name)?.textContent ?? ''
@@ -401,7 +469,9 @@ const dialogButton = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === label) ?? null
 const saved = () => JSON.parse(localStorage.getItem('onboard.player.v1') ?? '{}')
 
-await click('employee profile')
+await click('episodes')
+await flush(300)
+await click('profile')
 await flush(300)
 await click('shop')
 await flush(300)
@@ -469,7 +539,7 @@ ok(has('First Day Survivor'), 'profile shows equipped title')
 ok(has('Showcase') && has('Mr. Poopybutthole') && has('Placeholder art'), 'profile shows showcase with labelled placeholder art')
 ok(!!document.querySelector('svg circle[stroke="#97CE4C"]'), 'profile avatar wears the border')
 
-console.log('\n=== 14. COSMETICS RULES ===')
+console.log('\n=== 15. COSMETICS RULES ===')
 const cos = await import('../src/engine/cosmetics')
 const base = { ...s, credits: 1000, cosmetics: cos.freshCosmetics() }
 const bought = cos.purchase(base, 'risk-taker')

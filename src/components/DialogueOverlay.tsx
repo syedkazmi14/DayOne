@@ -2,16 +2,36 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { getCharacter } from '@/content/characters'
-import type { Dialogue } from '@/types'
-import { speak, stopAllSpeech } from '@/voice/voice'
-import { CharacterPortrait } from './ui/CharacterPortrait'
+import type { AssetRef, Dialogue } from '@/types'
+import { playLineAsset, speak, stopAllSpeech, type SpeechHandle } from '@/voice/voice'
+import { CharacterAvatar } from './ui/CharacterAvatar'
 
 /* ============================================================================
- * Subtitle layer for cinematic scenes: speaker card, typewriter reveal, and
- * click-anywhere-to-advance. Minimal chrome — the scene is the interface.
+ * Dialogue presentation — the half of the hybrid model that is NOT video.
+ *
+ * Background (SceneCanvas) + character sprite + name + line + voice, with a
+ * little life in the sprite while it speaks. Far cheaper and more controllable
+ * than generating a clip per line. Voice prefers the line's pre-rendered
+ * ElevenLabs file, then live synthesis.
  * ========================================================================== */
 
 const SPEED = 16 // ms per character
+
+function Waveform({ active, color, bars = 9, className = '' }: { active: boolean; color: string; bars?: number; className?: string }) {
+  return (
+    <span className={`flex h-4 items-end gap-[3px] ${className}`} aria-hidden>
+      {Array.from({ length: bars }, (_, i) => (
+        <motion.span
+          key={i}
+          className="w-[3px] rounded-full"
+          style={{ background: color }}
+          animate={active ? { height: [3, 6 + ((i * 5) % 11), 4] } : { height: 3 }}
+          transition={active ? { duration: 0.46 + (i % 4) * 0.08, repeat: Infinity, repeatType: 'mirror' } : { duration: 0.2 }}
+        />
+      ))}
+    </span>
+  )
+}
 
 export function DialogueOverlay({
   line,
@@ -19,16 +39,20 @@ export function DialogueOverlay({
   total,
   onAdvance,
   voiceOn,
+  audio,
 }: {
   line: Dialogue
   index: number
   total: number
   onAdvance: () => void
   voiceOn: boolean
+  /** Pre-rendered voice for this line, if the Studio generated one. */
+  audio?: AssetRef
 }) {
   const ch = getCharacter(line.characterId)
   const isPlayer = line.characterId === 'you'
   const [shown, setShown] = useState(0)
+  const [voicePlaying, setVoicePlaying] = useState(false)
   const complete = shown >= line.line.length
   const timer = useRef<number>()
 
@@ -45,13 +69,24 @@ export function DialogueOverlay({
 
   useEffect(() => {
     if (!voiceOn || isPlayer) return
-    let handle: { stop(): void } | undefined
-    void speak(line.line, ch).then((h) => (handle = h))
+    let handle: SpeechHandle | undefined
+    let alive = true
+    const start = audio?.url ? playLineAsset(audio.url, line.line, ch) : speak(line.line, ch)
+    void start.then((h) => {
+      handle = h
+      if (!alive) return h.stop()
+      setVoicePlaying(true)
+      void h.done.then(() => alive && setVoicePlaying(false))
+    })
     return () => {
+      alive = false
       handle?.stop()
       stopAllSpeech()
+      setVoicePlaying(false)
     }
-  }, [line.line, voiceOn, isPlayer, ch])
+  }, [line.line, voiceOn, isPlayer, ch, audio?.url])
+
+  const speaking = !isPlayer && (!complete || voicePlaying)
 
   const skipOrAdvance = () => {
     if (!complete) {
@@ -69,12 +104,22 @@ export function DialogueOverlay({
           {!isPlayer && (
             <motion.div
               key={ch.id}
-              initial={{ opacity: 0, y: 24, filter: 'blur(6px)' }}
-              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              initial={{ opacity: 0, x: -28, filter: 'blur(6px)' }}
+              animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="hidden shrink-0 sm:block"
+              className="relative hidden shrink-0 sm:block"
             >
-              <CharacterPortrait character={ch} size={116} speaking={!complete} />
+              <div className="pointer-events-none absolute -inset-8 opacity-25 blur-3xl" style={{ background: ch.accent }} />
+              <motion.div
+                animate={speaking ? { y: [0, -3, 0] } : { y: 0 }}
+                transition={speaking ? { duration: 1.8, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.3 }}
+                className="relative border"
+                style={{ borderColor: `${ch.accent}55`, boxShadow: `0 30px 80px -30px ${ch.accent}99` }}
+              >
+                <CharacterAvatar character={ch} size={164} ratio={1.18} priority />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-ink-900/90 to-transparent" />
+                <Waveform active={speaking} color={ch.accent} className="absolute bottom-2.5 left-1/2 -translate-x-1/2" />
+              </motion.div>
             </motion.div>
           )}
 
@@ -96,6 +141,7 @@ export function DialogueOverlay({
                     {isPlayer ? 'YOU' : ch.name}
                   </span>
                   {!isPlayer && <span className="hidden font-mono text-[10px] text-bone-faint sm:inline">{ch.role}</span>}
+                  {voicePlaying && <Waveform active color={ch.accent} bars={5} className="sm:hidden" />}
                 </div>
 
                 <p

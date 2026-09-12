@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Lock, Play } from 'lucide-react'
+import { Clock, Lock, Play, Sparkles } from 'lucide-react'
+import { conceptLabel } from '@/content/knowledge'
+import { Chip, Eyebrow } from '../ui/Bits'
 import { episodesForGroup, featuredEpisode } from '@/content/episodes'
 import { getCharacter } from '@/content/characters'
 import { useGame } from '@/engine/gameStore'
@@ -27,6 +29,9 @@ export function Home() {
   const shelf = episodesForGroup(group.id)
   const know = Math.round(overallKnowledge(state.player.mastery) * 100)
   const playable = featured && !featured.locked
+  const generated = Object.values(state.published).filter(
+    (e) => e.provenance?.status === 'published' && e.groupId === group.id,
+  )
 
   /* Starting the featured episode goes straight to the intro screen, whose cast
    * strip draws these four at 58px — a rung nothing on this screen has loaded.
@@ -111,10 +116,48 @@ export function Home() {
       </div>
 
       {/* episode shelf */}
-      <div className="px-6 pb-24 pt-8 sm:px-12 lg:px-20">
-        <div className="mb-5 flex items-baseline gap-3">
-          <h2 className="t-section">Episodes</h2>
-          <span className="font-sans text-[13px] text-bone-faint">Season 1</span>
+      <div className="px-6 pb-36 pt-6 sm:px-12 lg:px-20">
+        {generated.length > 0 && (
+          <div className="mb-12">
+            <div className="mb-4 flex items-center gap-2.5">
+              <Sparkles size={12} className="text-cyan" />
+              <Eyebrow className="text-cyan">generated from your company's material</Eyebrow>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {generated.map((ep) => (
+                <button
+                  key={ep.id}
+                  onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: ep.id })}
+                  className="group relative flex h-[230px] flex-col items-stretch overflow-hidden border border-cyan/25 text-left transition-all duration-500 hover:border-cyan/60"
+                >
+                  <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-[1.04]">
+                    <EpisodeStill episode={ep} sceneKey={`gen-${ep.id}`} paused />
+                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/72 to-ink-900/25" />
+                  <div className="relative flex h-full flex-col justify-end p-5">
+                    <div className="mb-auto flex items-center justify-between">
+                      <span className="font-mono text-[10px] uppercase tracking-ultra text-bone-faint">{ep.code}</span>
+                      <Chip tone="cyan">{ep.provenance?.generator === 'llm' ? 'ai-written' : 'composed'}</Chip>
+                    </div>
+                    <h3 className="t-display text-3xl text-bone">{ep.title}</h3>
+                    <p className="mt-2 font-sans text-[12.5px] font-light leading-snug text-bone-dim">{ep.subtitle}</p>
+                    <div className="mt-3 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan">
+                      {ep.topic} · act 3 → {(ep.provenance?.masteryTargets ?? []).map((c) => conceptLabel(c)).join(' / ')}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
+          <Eyebrow>
+            {group.name} · season one · your training. your choices.
+          </Eyebrow>
+          <span className="font-mono text-[10px] text-bone-faint">
+            {shelf.filter((e) => state.player.completedEpisodes.includes(e.id)).length} / {shelf.length} complete
+          </span>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

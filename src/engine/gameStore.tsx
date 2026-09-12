@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer } from 'react'
-import { getEpisode } from '@/content/episodes'
+import { getEpisode as getAuthoredEpisode } from '@/content/episodes'
 import { DEFAULT_GROUP_ID, getGroup } from '@/content/characterGroups'
 import { getCharacter } from '@/content/characters'
 import type {
@@ -15,9 +15,10 @@ import type {
   Scene,
   WagerResult,
 } from '@/types'
-import { adaptationRationale, applyDecision, baselineMastery, episodeScore, levelFromXp, weakestConcept } from './adaptive'
+import { applyDecision, baselineMastery, episodeScore, levelFromXp, selectVariant } from './adaptive'
 import { awardForDecision, awardForEpisode, equip, freshCosmetics, purchase, unequip } from './cosmetics'
-import { resolveWager, type WagerOption } from './risk'
+import { estimateSuccess, resolveWager, wagerOptions, type WagerOption, type WagerTier } from './risk'
+import { validateEpisode } from './validateEpisode'
 
 /* ============================================================================
  * GAME ENGINE
@@ -27,6 +28,11 @@ import { resolveWager, type WagerOption } from './risk'
  * model output can move the player to a scene that does not exist, skip an
  * act, or invent a branch. LLMs live strictly at the edges — conversation,
  * coaching, and authoring.
+ *
+ * Actions carry ids, never payloads the engine would have to trust: a choice is
+ * looked up on the current scene, a wager's stake and payout are derived from
+ * the player's balance. Generated episodes enter through PUBLISH_EPISODE, which
+ * refuses any graph that fails validation — so nothing unvalidated is playable.
  * ========================================================================== */
 
 export type View = 'home' | 'intro' | 'scene' | 'profile' | 'shop' | 'authoring' | 'results'
@@ -48,6 +54,8 @@ export interface GameState {
    * this character's voice profile, so selection alone changes the voice.
    */
   selectedCharacterId: string | null
+  /** Generated episodes that passed validation. Company content, not progress. */
+  published: Record<string, Episode>
   episodeId: string | null
   sceneId: string | null
   phase: Phase
@@ -67,6 +75,7 @@ export interface GameState {
 }
 
 const STORAGE_KEY = 'onboard.player.v1'
+const PUBLISHED_KEY = 'onboard.published.v1'
 
 function loadPlayer(): PlayerState {
   const fresh: PlayerState = {
@@ -104,11 +113,32 @@ const savePlayer = (p: PlayerState) => {
   }
 }
 
-const initialState = (): GameState => ({
+function loadPublished(): Record<string, Episode> {
+  try {
+    const raw = localStorage.getItem(PUBLISHED_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, Episode>
+    // Storage is not a trust boundary: stored graphs are re-validated on load.
+    return Object.fromEntries(Object.entries(parsed).filter(([, ep]) => validateEpisode(ep).ok))
+  } catch {
+    return {}
+  }
+}
+
+const savePublished = (eps: Record<string, Episode>) => {
+  try {
+    localStorage.setItem(PUBLISHED_KEY, JSON.stringify(eps))
+  } catch {
+    /* quota or private mode — published episodes last for this session */
+  }
+}
+
+export const initialState = (): GameState => ({
   view: 'home',
   player: loadPlayer(),
   groupId: DEFAULT_GROUP_ID,
   selectedCharacterId: null,
+  published: loadPublished(),
   episodeId: null,
   sceneId: null,
   phase: 'dialogue',
@@ -126,7 +156,7 @@ const initialState = (): GameState => ({
   creditsDelta: 0,
 })
 
-type Action =
+export type Action =
   | { type: 'GOTO'; view: View }
   | { type: 'SELECT_GROUP'; groupId: string }
   | { type: 'SELECT_CHARACTER'; characterId: string }
@@ -134,17 +164,23 @@ type Action =
   | { type: 'START_EPISODE' }
   | { type: 'ADVANCE_DIALOGUE' }
   | { type: 'OPEN_CHOICES' }
-  | { type: 'STAGE_WAGER'; option: WagerOption; estimate: number }
+  | { type: 'STAGE_WAGER'; tier: WagerTier }
   | { type: 'SKIP_WAGER' }
-  | { type: 'CHOOSE'; choice: Choice }
+  | { type: 'CHOOSE'; choiceId: string }
   | { type: 'CONTINUE' }
   | { type: 'OPEN_CHAT'; characterId: string }
   | { type: 'CLOSE_CHAT' }
   | { type: 'CHAT_TURN'; turn: ChatTurn }
+  | { type: 'PUBLISH_EPISODE'; episode: Episode; status: 'draft' | 'published' }
+  | { type: 'REMOVE_EPISODE'; episodeId: string }
   | { type: 'RESET_PROGRESS' }
   | { type: 'BUY_ITEM'; itemId: string }
   | { type: 'EQUIP_ITEM'; itemId: string }
   | { type: 'UNEQUIP_ITEM'; itemId: string }
+
+/** Authored episodes first — a generated graph can never shadow one. */
+export const findEpisode = (state: Pick<GameState, 'published'>, id: string | null | undefined): Episode | undefined =>
+  id ? (getAuthoredEpisode(id) ?? state.published[id]) : undefined
 
 /** Enter a scene, resolving adaptive variant slots deterministically. */
 function enterScene(state: GameState, ep: Episode, sceneId: string): GameState {
@@ -152,16 +188,10 @@ function enterScene(state: GameState, ep: Episode, sceneId: string): GameState {
   let adaptation = state.adaptation
 
   if (scene?.variants?.length) {
-    const candidates = scene.variants.map((v) => v.conceptFocus)
-    const focus = weakestConcept(state.player.mastery, candidates)
-    const chosen = scene.variants.find((v) => v.conceptFocus === focus) ?? scene.variants[0]
-    adaptation = {
-      focus,
-      rationale: adaptationRationale(state.player.mastery, focus),
-      sceneId: chosen.sceneId,
-    }
-    scene = ep.scenes[chosen.sceneId]
-    sceneId = chosen.sceneId
+    const pick = selectVariant(scene, state.player.mastery)
+    adaptation = { focus: pick.focus, rationale: pick.rationale, sceneId: pick.sceneId }
+    scene = ep.scenes[pick.sceneId]
+    sceneId = pick.sceneId
   }
 
   return {
@@ -192,8 +222,8 @@ function finishEpisode(state: GameState, ep: Episode): GameState {
   return { ...state, view: 'results', player, finalScore: score }
 }
 
-function reducer(state: GameState, action: Action): GameState {
-  const ep = state.episodeId ? getEpisode(state.episodeId) : undefined
+export function reducer(state: GameState, action: Action): GameState {
+  const ep = findEpisode(state, state.episodeId)
   const scene: Scene | undefined = ep && state.sceneId ? ep.scenes[state.sceneId] : undefined
 
   switch (action.type) {
@@ -215,13 +245,13 @@ function reducer(state: GameState, action: Action): GameState {
     }
 
     case 'SELECT_EPISODE': {
-      const chosen = getEpisode(action.episodeId)
-      if (!chosen) return state
+      const chosen = findEpisode(state, action.episodeId)
+      if (!chosen || chosen.locked) return state
       return { ...state, episodeId: chosen.id, groupId: chosen.groupId, view: 'intro' }
     }
 
     case 'START_EPISODE': {
-      const e = getEpisode(state.episodeId ?? '')
+      const e = findEpisode(state, state.episodeId)
       if (!e) return state
       const base: GameState = {
         ...state,
@@ -259,33 +289,42 @@ function reducer(state: GameState, action: Action): GameState {
     case 'OPEN_CHOICES':
       return { ...state, phase: 'choices', decisionStartedAt: state.decisionStartedAt ?? Date.now() }
 
-    case 'STAGE_WAGER':
+    case 'STAGE_WAGER': {
+      if (!scene || scene.kind !== 'decision') return state
+      const option = wagerOptions(state.player.credits).find((o) => o.tier === action.tier)
+      if (!option || option.stake <= 0 || option.stake > state.player.credits) return state
       return {
         ...state,
-        stagedWager: { ...action.option, estimate: action.estimate },
+        // Recorded now, revealed after the world reacts.
+        stagedWager: { ...option, estimate: estimateSuccess(scene, state.player.mastery).p },
         phase: 'choices',
         decisionStartedAt: Date.now(),
       }
+    }
 
     case 'SKIP_WAGER':
       return { ...state, stagedWager: null, phase: 'choices', decisionStartedAt: Date.now() }
 
     case 'CHOOSE': {
       if (!ep || !scene) return state
-      const { choice } = action
+      // The transition comes from the authored scene, never from the action.
+      const choice = scene.choices?.find((c) => c.id === action.choiceId)
+      if (!choice || !ep.scenes[choice.consequenceSceneId]) return state
       const ms = state.decisionStartedAt ? Date.now() - state.decisionStartedAt : 0
 
       let wager: WagerResult | undefined
       let credits = state.player.credits
       if (state.stagedWager) {
+        const w = state.stagedWager
         const verdict = resolveWager(choice.quality)
-        const payout = verdict === 'win' ? state.stagedWager.reward : verdict === 'push' ? state.stagedWager.stake : 0
-        credits = credits - state.stagedWager.stake + payout
+        const payout = verdict === 'win' ? w.reward : verdict === 'push' ? w.stake : 0
+        credits = credits - w.stake + payout
         wager = {
-          tier: state.stagedWager.tier,
-          staked: state.stagedWager.stake,
+          tier: w.tier,
+          staked: w.stake,
           payout,
-          estimate: state.stagedWager.estimate,
+          multiplier: w.multiplier,
+          estimate: w.estimate,
           won: verdict === 'win',
         }
       }
@@ -301,6 +340,7 @@ function reducer(state: GameState, action: Action): GameState {
         scoreImpact: choice.scoreImpact,
         wager,
         msToDecide: ms,
+        threat: scene.threat,
       }
 
       const player = awardForDecision(
@@ -341,6 +381,26 @@ function reducer(state: GameState, action: Action): GameState {
         player,
         questionsAsked: state.questionsAsked + (action.turn.role === 'player' ? 1 : 0),
       }
+    }
+
+    case 'PUBLISH_EPISODE': {
+      const { episode } = action
+      if (getAuthoredEpisode(episode.id) || !validateEpisode(episode).ok) return state
+      const stamped: Episode = {
+        ...episode,
+        locked: false,
+        provenance: episode.provenance && { ...episode.provenance, status: action.status },
+      }
+      const published = { ...state.published, [stamped.id]: stamped }
+      savePublished(published)
+      return { ...state, published }
+    }
+
+    case 'REMOVE_EPISODE': {
+      if (!state.published[action.episodeId]) return state
+      const { [action.episodeId]: _removed, ...published } = state.published
+      savePublished(published)
+      return { ...state, published }
     }
 
     case 'RESET_PROGRESS': {
@@ -397,7 +457,7 @@ if (import.meta.hot) import.meta.hot.data.gameCtx = Ctx
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, initialState)
-  const episode = state.episodeId ? getEpisode(state.episodeId) : undefined
+  const episode = findEpisode(state, state.episodeId)
   const scene = episode && state.sceneId ? episode.scenes[state.sceneId] : undefined
   const group = getGroup(state.groupId)
   const selectedCharacter = state.selectedCharacterId ? getCharacter(state.selectedCharacterId) : undefined

@@ -288,6 +288,25 @@ export async function speak(text: string, ch: Character): Promise<SpeechHandle> 
   return speakSimulated(text, profile)
 }
 
+/**
+ * Play a line pre-rendered at authoring time (Scene.assets.audio). If the file
+ * will not load or play, the line is synthesised live instead — the same
+ * degrade-never-throw contract as `speak`.
+ */
+export async function playLineAsset(url: string, text: string, ch: Character): Promise<SpeechHandle> {
+  const profile = resolveVoiceProfile(ch.voiceProfileId)
+  try {
+    const res = await fetch(url)
+    if (res.ok) {
+      const handle = await playBlob(await res.blob(), text, profile)
+      if (!('playbackError' in handle)) return handle
+    }
+  } catch {
+    /* fall through to live synthesis */
+  }
+  return speak(text, ch)
+}
+
 export const stopAllSpeech = () => {
   if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
 }

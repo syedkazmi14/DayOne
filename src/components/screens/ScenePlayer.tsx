@@ -3,7 +3,9 @@ import { ArrowRight, Sparkles, Volume2, VolumeX, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { conceptLabel } from '@/content/knowledge'
 import { useGame } from '@/engine/gameStore'
+import { episodeKnowledgeResolver } from '@/engine/validateEpisode'
 import { stopAllSpeech } from '@/voice/voice'
+import { AssetTierBadge } from '../ui/AssetTierBadge'
 import { CharacterChat } from '../CharacterChat'
 import { ChoicePanel } from '../ChoicePanel'
 import { ConsequencePanel } from '../ConsequencePanel'
@@ -66,7 +68,12 @@ export function ScenePlayer() {
   return (
     <div className="letterbox relative h-full overflow-hidden bg-black">
       {/* scene */}
-      <SceneCanvas shot={scene.shot} sceneKey={scene.id} paused={state.phase === 'choices' || state.phase === 'wager'} />
+      <SceneCanvas
+        shot={scene.shot}
+        sceneKey={scene.id}
+        assets={scene.assets}
+        paused={state.phase === 'choices' || state.phase === 'wager'}
+      />
 
       {/* cut-to-black between scenes */}
       <AnimatePresence>
@@ -95,6 +102,7 @@ export function ScenePlayer() {
               <EpisodeProgress episode={episode} currentAct={scene.act} compact />
             </div>
           </div>
+          <AssetTierBadge assets={scene.assets} className="mt-2.5" />
         </div>
 
         <div className="flex items-center gap-4">
@@ -153,15 +161,14 @@ export function ScenePlayer() {
               total={scene.dialogue.length}
               onAdvance={advance}
               voiceOn={voiceOn}
+              audio={scene.assets?.audio?.[state.dialogueIndex]}
             />
           )}
 
           {state.phase === 'wager' && (
             <RiskTerminal
-              scene={scene}
-              mastery={state.player.mastery}
               credits={state.player.credits}
-              onStake={(option, estimate) => dispatch({ type: 'STAGE_WAGER', option, estimate })}
+              onStake={(tier) => dispatch({ type: 'STAGE_WAGER', tier })}
               onSkip={() => dispatch({ type: 'SKIP_WAGER' })}
             />
           )}
@@ -173,7 +180,7 @@ export function ScenePlayer() {
               wager={state.stagedWager}
               onChoose={(choice) => {
                 stopAllSpeech()
-                dispatch({ type: 'CHOOSE', choice })
+                dispatch({ type: 'CHOOSE', choiceId: choice.id })
               }}
             />
           )}
@@ -182,6 +189,7 @@ export function ScenePlayer() {
             <ConsequencePanel
               scene={scene}
               wager={state.lastWager}
+              knowledge={episodeKnowledgeResolver(episode)}
               onContinue={() => dispatch({ type: 'CONTINUE' })}
               onTalk={(characterId) => dispatch({ type: 'OPEN_CHAT', characterId })}
             />

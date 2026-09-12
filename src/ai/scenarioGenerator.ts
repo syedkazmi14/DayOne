@@ -1,4 +1,4 @@
-import type { Choice, KnowledgeItem, ShotSpec } from '@/types'
+import type { Choice, KnowledgeItem } from '@/types'
 import { complete, isLive, LLMUnavailable } from './llm'
 
 /* ============================================================================
@@ -116,25 +116,6 @@ export async function generateScenario(k: KnowledgeItem): Promise<ScenarioDraft>
   return localDraft(k)
 }
 
-/* ------------------------------------------------------ video authoring stub */
-
-export const VIDEO_PIPELINE_STAGES = [
-  'SHOT LIST',
-  'DIALOGUE PASS',
-  'VOICEOVER SCRIPT',
-  'T2V PROMPTS',
-  'RENDER QUEUE',
-  'CLIP CACHE',
-]
-
-/**
- * Where a real text-to-video API would be called — at authoring time, per shot,
- * writing `videoUrl` back onto the scene. The runtime reads the cache only.
- */
-export async function requestClip(shot: ShotSpec): Promise<{ status: 'queued'; prompt: string; note: string }> {
-  return {
-    status: 'queued',
-    prompt: shot.prompt,
-    note: 'No video provider configured. Wire a text-to-video API here and persist the result to Scene.shot.videoUrl. The player never waits on this call.',
-  }
-}
+/* Whole playable episodes are built by src/ai/episodeGenerator.ts, and video
+ * for them goes through requestClip() in src/media/video.ts. This module keeps
+ * the single-rule scene draft the Studio shows as a close-up of one beat. */

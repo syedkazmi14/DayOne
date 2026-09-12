@@ -92,9 +92,13 @@ const start = (args, env) => {
   return c
 }
 
+const MEDIA_PORT = Number(process.env.VISUAL_MEDIA_PORT ?? 8798)
 start(['server/voiceProxy.mjs'], { VOICE_PROXY_PORT: String(VOICE_PORT), ELEVENLABS_API_KEY: '' })
+// No REPLICATE_API_TOKEN: the app must report procedural previs, which is the default path.
+start(['server/mediaServer.mjs'], { MEDIA_SERVER_PORT: String(MEDIA_PORT), VOICE_PROXY_PORT: String(VOICE_PORT), REPLICATE_API_TOKEN: '' })
 start(['node_modules/vite/bin/vite.js', '--port', String(PORT), '--strictPort'], {
   VOICE_PROXY_PORT: String(VOICE_PORT),
+  MEDIA_SERVER_PORT: String(MEDIA_PORT),
 })
 
 const shutdown = () => {

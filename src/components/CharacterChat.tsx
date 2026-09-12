@@ -1,12 +1,14 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, CornerDownLeft, Keyboard, Mic, ShieldAlert, ShieldCheck, Square, Terminal, Volume2, VolumeX, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { askCharacter, suggestedQuestions, type SceneContext } from '@/ai/characterAgent'
+import { askCharacter, suggestedQuestions, type CharacterReply, type SceneContext } from '@/ai/characterAgent'
 import { llmLabel } from '@/ai/llm'
-import { knowledgeBase, knowledgeById } from '@/content/knowledge'
+import { corpusFor } from '@/ai/retrieval'
 import { getCharacter } from '@/content/characters'
 import type { ChatTurn } from '@/types'
 import { useGame } from '@/engine/gameStore'
+import { episodeKnowledgeResolver } from '@/engine/validateEpisode'
+import { GroundingInspector } from './GroundingInspector'
 import { speak, startMic, stopAllSpeech, ttsTier, voiceLabel, type MicSession } from '@/voice/voice'
 import { resolveVoiceProfile } from '@/voice/voiceProfiles'
 import { Chip } from './ui/Bits'
@@ -23,11 +25,13 @@ import { CharacterAvatar } from './ui/CharacterAvatar'
  * ========================================================================== */
 
 const BARS = 34
-const knowledgeCount = knowledgeBase.length
 
 export function CharacterChat({ characterId, onClose }: { characterId: string; onClose: () => void }) {
-  const { state, dispatch, scene, activeConcepts } = useGame()
+  const { state, dispatch, scene, episode, activeConcepts } = useGame()
   const ch = getCharacter(characterId)
+  // A generated episode's characters are grounded in the material it was built from.
+  const corpus = corpusFor(episode?.knowledge)
+  const resolveKnowledge = episodeKnowledgeResolver(episode)
   const [mode, setMode] = useState<'text' | 'voice'>('text')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -35,9 +39,8 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
   const [voiceOut, setVoiceOut] = useState(true)
   const [subtitle, setSubtitle] = useState<string | null>(null)
   const [inspect, setInspect] = useState(false)
-  const [lastPrompt, setLastPrompt] = useState<string>('')
-  const [lastHits, setLastHits] = useState<{ id: string; topic: string; score: number }[]>([])
-  const [lastConfidence, setLastConfidence] = useState<number | null>(null)
+  const [lastReply, setLastReply] = useState<CharacterReply | null>(null)
+  const lastConfidence = lastReply && lastReply.kind !== 'greeting' ? lastReply.confidence : null
   /** Set when speech had to degrade a tier. Shown, never thrown. */
   const [voiceNote, setVoiceNote] = useState<string | null>(null)
 
@@ -86,10 +89,8 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
     })
     setBusy(true)
     try {
-      const reply = await askCharacter({ characterId, question: q, ctx, history: turns })
-      setLastPrompt(reply.promptPreview)
-      setLastHits(reply.retrieved.hits.map((h) => ({ id: h.item.id, topic: h.item.topic, score: h.score })))
-      setLastConfidence(reply.kind === 'greeting' ? null : reply.confidence)
+      const reply = await askCharacter({ characterId, question: q, ctx, history: turns, corpus })
+      setLastReply(reply)
       const turn: ChatTurn = {
         id: crypto.randomUUID(),
         characterId,
@@ -131,7 +132,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
       return
     }
     stopAllSpeech()
-    const session = await startMic(suggestedQuestions(ctx))
+    const session = await startMic(suggestedQuestions(ctx, corpus))
     mic.current = session
     setRecording(true)
     const tick = () => {
@@ -143,7 +144,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
     tick()
   }
 
-  const suggestions = suggestedQuestions(ctx)
+  const suggestions = suggestedQuestions(ctx, corpus)
 
   return (
     <motion.aside
@@ -174,7 +175,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
         </div>
         <div className="relative flex flex-wrap items-center gap-1.5 px-5 pb-3">
           <Chip tone="cyan">{llmLabel()}</Chip>
-          <Chip tone="neutral">rag · {knowledgeCount} rules</Chip>
+          <Chip tone="neutral">rag · {corpus.length} rules</Chip>
           <Chip tone="neutral">
             <Volume2 size={10} />
             {resolveVoiceProfile(ch.voiceProfileId).label.split(' — ')[0]}
@@ -235,7 +236,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
                 {!!t.citations?.length && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {t.citations.map((id) => {
-                      const k = knowledgeById(id)
+                      const k = resolveKnowledge(id)
                       return (
                         <span
                           key={id}
@@ -300,25 +301,8 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
             exit={{ height: 0, opacity: 0 }}
             className="shrink-0 overflow-hidden border-t border-bone/10 bg-ink-900/70"
           >
-            <div className="max-h-[34vh] overflow-y-auto px-5 py-4">
-              <div className="t-eyebrow mb-2 text-cyan">retrieved context</div>
-              {lastHits.length ? (
-                <div className="mb-3 space-y-1">
-                  {lastHits.map((h) => (
-                    <div key={h.id} className="flex items-baseline gap-2 font-mono text-[10px]">
-                      <span className="text-signal">{h.id}</span>
-                      <span className="truncate text-bone-dim">{h.topic}</span>
-                      <span className="ml-auto tabular-nums text-bone-faint">{h.score.toFixed(2)}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mb-3 font-mono text-[10px] text-bone-faint">nothing yet — ask a question</p>
-              )}
-              <div className="t-eyebrow mb-2 text-cyan">system prompt sent to the model</div>
-              <pre className="whitespace-pre-wrap break-words font-mono text-[9.5px] leading-relaxed text-bone-faint">
-                {lastPrompt || '—'}
-              </pre>
+            <div className="max-h-[44vh] overflow-y-auto px-5 py-4">
+              <GroundingInspector reply={lastReply} resolveKnowledge={resolveKnowledge} />
             </div>
           </motion.div>
         )}

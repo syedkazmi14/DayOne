@@ -1,15 +1,28 @@
-import { existsSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { firstDay } from '../src/content/episodes/firstDay'
+import { validateEpisode } from '../src/engine/validateEpisode'
+import { initialState, reducer, type Action, type GameState } from '../src/engine/gameStore'
+import { analyseRun, calibration, describeTelemetry } from '../src/engine/telemetry'
+import { applyScript, customTopic, generateEpisode, TOPICS, TopicNotCovered } from '../src/ai/episodeGenerator'
+import { attachAsset, planEpisodeAssets, presentationOf, visualTierOf } from '../src/media/assetPlan'
+import { awaitClip, clipSeconds, clipToAsset, motionPrompt, ProceduralPrevisProvider, requestClip, ServerVideoProvider, videoProvider } from '../src/media/video'
+import { imageProvider, ServerImageProvider } from '../src/media/image'
+import { RuntimeSpeechProvider, ServerAudioProvider } from '../src/media/audio'
 import { episodes, episodesForGroup, featuredEpisode } from '../src/content/episodes'
 import { characterGroups, groupCast } from '../src/content/characterGroups'
 import { resolveVoiceProfile, voiceProfiles } from '../src/voice/voiceProfiles'
 import { knowledgeBase, knowledgeById, concepts } from '../src/content/knowledge'
 import { characters } from '../src/content/characters'
-import { askCharacter } from '../src/ai/characterAgent'
-import { retrieve } from '../src/ai/retrieval'
+import { askCharacter, suggestedQuestions } from '../src/ai/characterAgent'
+import { CONFIDENCE_FLOOR, corpusFor, retrieve, SPECIFICITY_FLOOR } from '../src/ai/retrieval'
 import { generateCoachAnalysis } from '../src/ai/coach'
-import { applyDecision, baselineMastery, weakestConcept, episodeScore } from '../src/engine/adaptive'
-import { estimateSuccess, wagerOptions } from '../src/engine/risk'
+import { applyDecision, baselineMastery, episodeScore, PLAYER_LENSES, selectVariant } from '../src/engine/adaptive'
+import { estimateSuccess, MULTIPLIER, wagerOptions } from '../src/engine/risk'
 import {
   partitionValidItems,
   sanitizeKnowledgeItem,
@@ -19,7 +32,7 @@ import {
 } from '../src/content/validateKnowledge'
 import { MAX_FILE_BYTES, ParseError, parseText, slugifyName } from '../src/ingest/parse'
 import { contentStore, ReadOnlyStoreError } from '../src/data/contentStore'
-import type { ConceptId, DecisionRecord, KnowledgeItem, Scene } from '../src/types'
+import type { AssetRef, ConceptId, DecisionRecord, Episode, KnowledgeItem, ThreatProfile, WagerResult } from '../src/types'
 
 let fails = 0
 const ok = (cond: boolean, msg: string) => {
@@ -29,64 +42,45 @@ const section = (s: string) => console.log('\n=== ' + s + ' ===')
 
 /* ---------------------------------------------------------------- graph */
 section('EPISODE GRAPH INTEGRITY')
+/* The rules live in src/engine/validateEpisode.ts, so the reducer's publish
+ * gate, the Studio and this suite enforce one definition. */
 const scenes = firstDay.scenes
 const ids = Object.keys(scenes)
 console.log(`scenes: ${ids.length}`)
 
-for (const s of Object.values(scenes)) {
-  ok(s.id in scenes, `scene key mismatch: ${s.id}`)
-  if (s.next) ok(!!scenes[s.next], `${s.id}.next -> missing ${s.next}`)
-  for (const v of s.variants ?? []) ok(!!scenes[v.sceneId], `${s.id} variant -> missing ${v.sceneId}`)
-  if (s.kind === 'decision') {
-    ok((s.choices?.length ?? 0) === 3, `${s.id} should have 3 choices, has ${s.choices?.length}`)
-    ok(s.choices!.filter(c => c.quality === 'best').length === 1, `${s.id} needs exactly one best choice`)
-    ok(new Set(s.choices!.map(c => c.quality)).size === 3, `${s.id} choices should span all three qualities`)
-    for (const c of s.choices!) {
-      ok(!!scenes[c.consequenceSceneId], `${s.id}/${c.id} -> missing ${c.consequenceSceneId}`)
-      ok(c.knowledgeConcepts.length > 0, `${s.id}/${c.id} has no concepts`)
-      ok(!!c.ledgerLabel, `${s.id}/${c.id} has no ledger label`)
-      ok(!/\b(correct|incorrect|right answer|wrong answer)\b/i.test(c.text), `${s.id}/${c.id} leaks correctness in wording`)
-    }
-  }
-  if (s.kind === 'consequence') {
-    ok(!!s.outcome, `${s.id} consequence without outcome`)
-    ok((s.outcome?.citations.length ?? 0) > 0, `${s.id} outcome has no citations`)
-    for (const c of s.outcome!.citations) ok(!!knowledgeById(c), `${s.id} cites unknown knowledge ${c}`)
-    ok(!!s.next, `${s.id} has no next`)
-    ok((s.chatWith?.length ?? 0) > 0, `${s.id} has no chat partners`)
-    ok(!/\b(correct|incorrect)\b/i.test(s.outcome!.lesson), `${s.id} lesson says correct/incorrect`)
-    ok(s.outcome!.lesson.length > 180, `${s.id} lesson too thin (${s.outcome!.lesson.length} chars)`)
-  }
-  for (const d of s.dialogue) ok(!!characters[d.characterId], `${s.id} unknown speaker ${d.characterId}`)
-}
+const graph = validateEpisode(firstDay)
+for (const e of graph.errors) ok(false, `${e.sceneId} · ${e.message}`)
+ok(graph.reachable === ids.length, `every scene reachable (${graph.reachable}/${ids.length})`)
+ok(graph.terminals.length === 1 && graph.terminals[0] === 's_end', `terminal scenes: ${graph.terminals.join(', ')}`)
+console.log(`reachable: ${graph.reachable}/${ids.length} · terminal: ${graph.terminals.join(', ')}`)
+for (const d of Object.values(scenes).flatMap(s => s.outcome?.citations ?? [])) ok(!!knowledgeById(d), `cites unknown knowledge ${d}`)
 
-/* reachability: walk every branch */
-const visited = new Set<string>()
-const endings = new Set<string>()
-const walk = (id: string, depth = 0) => {
-  if (depth > 40) throw new Error('cycle at ' + id)
-  if (visited.has(id)) return
-  visited.add(id)
-  const s: Scene = scenes[id]
-  if (!s) return
-  if (s.variants) { s.variants.forEach(v => walk(v.sceneId, depth + 1)); return }
-  if (s.choices) { s.choices.forEach(c => walk(c.consequenceSceneId, depth + 1)); return }
-  if (s.next) walk(s.next, depth + 1)
-  else endings.add(id)
-}
-walk(firstDay.entrySceneId)
-ok(visited.size === ids.length, `unreachable scenes: ${ids.filter(i => !visited.has(i)).join(', ') || 'none'}`)
-ok(endings.size === 1 && endings.has('s_end'), `terminal scenes: ${[...endings].join(', ')}`)
-console.log(`reachable: ${visited.size}/${ids.length} · terminal: ${[...endings].join(', ')}`)
+/* every decision carries a threat profile, or the coach's telemetry goes blind */
+for (const s of Object.values(scenes)) if (s.kind === 'decision') ok(!!s.threat, `${s.id} has no threat profile`)
 
-/* every adaptive variant must be selectable */
+/* the validator has to catch what it claims to catch */
+const broken = (mutate: (ep: Episode) => void) => {
+  const ep = structuredClone(firstDay)
+  mutate(ep)
+  return validateEpisode(ep).ok
+}
+ok(!broken(ep => { ep.scenes.d1_email.choices![0].consequenceSceneId = 'nowhere' }), 'a dangling branch fails validation')
+ok(!broken(ep => { ep.scenes.c1_report.next = 'd1_email' }), 'a cycle fails validation')
+ok(!broken(ep => { ep.scenes.d1_email.choices![0].quality = 'best' }), 'two strong options fail validation')
+ok(!broken(ep => { ep.scenes.c1_report.outcome!.citations = ['K-NOPE-99'] }), 'an unresolvable citation fails validation')
+ok(!broken(ep => { ep.scenes.d1_email.choices![1].text = 'This is the correct answer.' }), 'correctness wording fails validation')
+ok(!broken(ep => { delete (ep.scenes as Record<string, unknown>).s_end }), 'a missing ending fails validation')
+
+/* every adaptive variant must be selectable — through the reducer's own selector */
 const gate = Object.values(scenes).find(s => s.variants)!
 for (const v of gate.variants!) {
   const m = baselineMastery()
   for (const c of Object.keys(m) as ConceptId[]) m[c] = { ...m[c], score: c === v.conceptFocus ? 0.05 : 0.9 }
-  ok(weakestConcept(m, gate.variants!.map(x => x.conceptFocus)) === v.conceptFocus, `variant ${v.sceneId} unreachable`)
+  ok(selectVariant(gate, m).sceneId === v.sceneId, `variant ${v.sceneId} unreachable`)
 }
 console.log(`adaptive variants selectable: ${gate.variants!.length}/3`)
+const lensPicks = PLAYER_LENSES.map(l => selectVariant(gate, l.mastery).sceneId)
+ok(lensPicks[0] === 's3_call' && lensPicks[1] === 's3_export', `player A gets THE CALL and player B THE WEEKEND (got ${lensPicks.join(' / ')})`)
 
 /* --------------------------------------------------------- roster + assets */
 section('ROSTER, VOICES AND ARTWORK')
@@ -171,7 +165,13 @@ for (const [q, expect] of probes) {
   if (expect) ok(top.startsWith(expect) && grounded, `expected ${expect} for "${q}"`)
 }
 // off-topic must refuse
-for (const q of ['what is the weather in tokyo today', 'how do I file my expenses for the christmas party']) {
+for (const q of [
+  'what is the weather in tokyo today',
+  'how do I file my expenses for the christmas party',
+  // On-topic words, off-topic subject: "password" and "machine" match real rules.
+  'What is the password for the espresso machine on floor two?',
+  'What is the wifi password for the guest network in the cafeteria?',
+]) {
   ok(retrieve(q).confidence < 0.3, `should refuse: "${q}"`)
 }
 
@@ -207,6 +207,11 @@ for (const [id, q] of qs) {
 }
 const offTopic = await askCharacter({ characterId: 'summer', question: 'What do you think about the new espresso machine on floor two?', ctx, history: [] })
 ok(offTopic.grounded === false && offTopic.citations.length === 0, 'off-topic question should be declined, not answered')
+const espressoPassword = await askCharacter({ characterId: 'summer', question: 'What is the password for the espresso machine on floor two?', ctx, history: [] })
+ok(
+  espressoPassword.kind === 'refusal' && espressoPassword.citations.length === 0,
+  `a question whose subject is absent from the material is refused even when common words match (conf ${espressoPassword.confidence.toFixed(2)}, specificity ${espressoPassword.retrieved.signals.specificity.toFixed(2)})`,
+)
 
 /* determinism */
 const a1 = await askCharacter({ characterId: 'summer', question: 'Why report it at all?', ctx, history: [] })
@@ -220,8 +225,11 @@ const d1 = scenes.d1_email
 const est0 = estimateSuccess(d1, mastery)
 console.log(`estimate for d1_email: ${Math.round(est0.p * 100)}% from ${est0.drivers.map(d => d.concept + ':' + Math.round(d.score * 100)).join(' ')}`)
 ok(est0.p > 0.15 && est0.p < 0.95, 'estimate should stay off the rails')
-const opts = wagerOptions(1240, est0.p)
-console.log('wagers: ' + opts.map(o => `${o.tier} -${o.stake}/+${o.reward}`).join('  '))
+const opts = wagerOptions(1240)
+console.log('wagers: ' + opts.map(o => `${o.tier} ${o.multiplier}x -${o.stake}/+${o.reward}`).join('  '))
+ok(opts.map(o => o.multiplier).join() === '1.2,2,4', 'bets are SAFE 1.2x, RISKY 2x, ALL IN 4x')
+ok(opts.every(o => o.reward === Math.round(o.stake * o.multiplier)), 'a win returns stake x multiplier')
+ok(wagerOptions(0).every(o => o.stake === 0), 'a zero balance stakes nothing')
 ok(opts.every(o => o.reward > o.stake), 'every tier should pay more than it stakes')
 ok(opts[2].stake === 1240, 'all-in should stake the balance')
 ok(opts[0].stake < opts[1].stake && opts[1].stake <= opts[2].stake, 'stake ladder must ascend')
@@ -236,7 +244,7 @@ console.log(`phishing: ${Math.round(before.phishing.score*100)} -> best ${Math.r
 ok(episodeScore([]) === 0, 'empty run scores 0')
 const perfect: DecisionRecord[] = ['d1_email','d2_tool','d3_creds','d4_report'].map(id => {
   const c = scenes[id].choices!.find(x => x.quality === 'best')!
-  return { sceneId: id, sceneTitle: id, choiceId: c.id, choiceLabel: c.text, ledgerLabel: c.ledgerLabel, quality: c.quality, concepts: c.knowledgeConcepts, scoreImpact: c.scoreImpact, msToDecide: 12000 }
+  return { sceneId: id, sceneTitle: id, choiceId: c.id, choiceLabel: c.text, ledgerLabel: c.ledgerLabel, quality: c.quality, concepts: c.knowledgeConcepts, scoreImpact: c.scoreImpact, msToDecide: 12000, threat: scenes[id].threat }
 })
 const worst = perfect.map(d => {
   const c = scenes[d.sceneId].choices!.find(x => x.quality === 'poor')!
@@ -439,6 +447,478 @@ try {
 }
 ok(refusedWrite, 'the static store should refuse writes rather than silently drop them')
 console.log(`store=${store.kind} · ${(await store.listKnowledge()).length} rules · ${(await store.listSourceDocs()).length} docs · read-only`)
+
+/* ------------------------------------------------ engine: deterministic */
+section('ENGINE · DETERMINISTIC TRANSITIONS')
+const play = (s: GameState, ...actions: Action[]) => actions.reduce(reducer, s)
+const toPhase = (s: GameState, phase: GameState['phase'], limit = 60) => {
+  for (let i = 0; i < limit && s.phase !== phase; i++) s = reducer(s, { type: 'ADVANCE_DIALOGUE' })
+  return s
+}
+
+const started = play(initialState(), { type: 'SELECT_EPISODE', episodeId: 'rm-ep01' }, { type: 'START_EPISODE' })
+ok(started.view === 'scene' && started.sceneId === 's1_arrival', 'START_EPISODE enters the authored entry scene')
+ok(reducer(started, { type: 'STAGE_WAGER', tier: 'allin' }) === started, 'a bet outside a decision scene is ignored')
+
+const atD1 = toPhase(started, 'wager')
+ok(atD1.sceneId === 'd1_email' && atD1.phase === 'wager', `dialogue advances deterministically to the first bet (at ${atD1.sceneId}/${atD1.phase})`)
+ok(reducer(atD1, { type: 'CHOOSE', choiceId: 'd2_a' }) === atD1, "another scene's choice id is ignored — an action cannot inject a transition")
+ok(reducer(atD1, { type: 'CHOOSE', choiceId: 'invented_choice' }) === atD1, 'an invented choice id is ignored')
+
+const credits0 = atD1.player.credits
+const risky = wagerOptions(credits0)[1]
+const staked = reducer(atD1, { type: 'STAGE_WAGER', tier: 'risky' })
+ok(staked.stagedWager?.stake === risky.stake && staked.stagedWager?.multiplier === 2, 'stake and multiplier are derived by the engine, not sent by the UI')
+ok(staked.stagedWager?.estimate === estimateSuccess(scenes.d1_email, atD1.player.mastery).p, 'the mastery estimate is recorded silently at bet time')
+
+const verified = reducer(staked, { type: 'CHOOSE', choiceId: 'd1_b' })
+ok(verified.sceneId === 'c1_report', `the strong choice transitions to its authored consequence (got ${verified.sceneId})`)
+ok(verified.player.credits === credits0 - risky.stake + risky.reward, 'a strong call pays stake x 2')
+ok(verified.decisionsThisEpisode[0].threat?.source === 'external', 'the decision record carries the scene threat profile')
+ok(verified.lastWager?.estimate === staked.stagedWager?.estimate, 'the estimate is revealed with the settled bet')
+
+const again = reducer(staked, { type: 'CHOOSE', choiceId: 'd1_b' })
+ok(
+  again.sceneId === verified.sceneId && again.player.credits === verified.player.credits && JSON.stringify(again.player.mastery) === JSON.stringify(verified.player.mastery),
+  'the same (state, action) produces the same state',
+)
+const clicked = play(atD1, { type: 'STAGE_WAGER', tier: 'allin' }, { type: 'CHOOSE', choiceId: 'd1_a' })
+ok(clicked.sceneId === 'c1_click' && clicked.player.credits === 0, 'all in on a poor call loses the balance; the branch is still the authored one')
+
+/* ------------------------------------------------ generator: episodes */
+section('SCENARIO GENERATOR · KNOWLEDGE -> VALIDATED GRAPH')
+const genFor = (topicId: string, mastery = baselineMastery(), groupId = 'rick-and-morty') =>
+  generateEpisode({ topic: TOPICS.find(t => t.id === topicId)!, groupId, mastery })
+
+for (const t of TOPICS.filter(t => t.concepts.length)) {
+  const r = await genFor(t.id)
+  for (const e of r.report.errors) ok(false, `${t.id}: ${e.sceneId} · ${e.message}`)
+  ok(r.report.ok && r.source === 'local', `${t.id}: the generated graph validates offline`)
+  const ep = r.episode
+  const decisions = Object.values(ep.scenes).filter(s => s.kind === 'decision')
+  ok(decisions.every(s => s.threat && s.knowledgeRefs?.length), `${t.id}: every decision carries a threat profile and knowledge refs`)
+  ok(Object.values(ep.scenes).every(s => s.shot.prompt.length > 40), `${t.id}: every scene has a shot spec`)
+  ok(presentationOf(ep.scenes[ep.entrySceneId]) === 'clip', `${t.id}: the cold open is specified as a clip`)
+  ok(ep.knowledge!.length >= 2 && ep.provenance!.knowledgeIds.every(id => knowledgeById(id)), `${t.id}: grounded in extracted company rules`)
+  ok(r.report.adaptiveVariants >= 2, `${t.id}: act three has at least two adaptive variants`)
+  console.log(`  ${t.id.padEnd(14)} ${ep.title} · ${r.report.total} scenes · ${r.report.decisions} decisions · act 3 -> ${r.plan.targets.join(', ')}`)
+}
+const phishing = await genFor('phishing')
+ok(phishing.episode.scenes.g_d1.threat!.source !== phishing.episode.scenes.g_d2.threat!.source, 'acts one and two test both threat sources')
+
+for (const topic of [TOPICS.find(t => t.id === 'workplace-safety')!, customTopic('the espresso machine on floor two')]) {
+  let refused: unknown = null
+  try {
+    await generateEpisode({ topic, groupId: 'rick-and-morty', mastery: baselineMastery() })
+  } catch (e) {
+    refused = e
+  }
+  ok(refused instanceof TopicNotCovered, `"${topic.label}" is not in the material — generation refuses rather than improvising`)
+}
+const custom = await generateEpisode({ topic: customTopic('sharing passwords and MFA codes'), groupId: 'south-park', mastery: baselineMastery() })
+ok(custom.report.ok, 'a custom topic the material does cover generates a valid graph')
+
+const phishingAgain = await genFor('phishing')
+const noClock = (ep: Episode) => JSON.stringify({ ...ep, provenance: { ...ep.provenance, createdAt: '' } })
+ok(noClock(phishing.episode) === noClock(phishingAgain.episode), 'the offline generator is deterministic for the same input')
+
+const phishingGate = Object.values(phishing.episode.scenes).find(s => s.variants?.length)!
+const [lensA, lensB] = PLAYER_LENSES.map(l => selectVariant(phishingGate, l.mastery))
+ok(lensA.sceneId !== lensB.sceneId, `player A and player B get different act threes (${lensA.focus} vs ${lensB.focus})`)
+const forA = await genFor('phishing', PLAYER_LENSES[0].mastery)
+const forB = await genFor('phishing', PLAYER_LENSES[1].mastery)
+ok(forA.plan.targets[0] !== forB.plan.targets[0], `targets are ordered by each player's weakness (${forA.plan.targets[0]} vs ${forB.plan.targets[0]})`)
+
+/* A model writes words, never structure. */
+const speakers: Record<string, string> = { player: 'you' }
+for (const [role, ch] of Object.entries(phishing.roles)) speakers[role] = ch.id
+const g1 = phishing.episode.scenes.g_d1
+const hostile = applyScript(
+  phishing.episode,
+  {
+    scenes: {
+      g_d1: { choices: { [g1.choices![0].id]: 'Rewritten wording for this option.' }, next: 'g_end', consequenceSceneId: 'g_end', quality: 'best' },
+      g_invented: { title: 'A SCENE THE ENGINE NEVER AUTHORED' },
+      g_open: { dialogue: [{ speaker: 'the ceo', line: 'I am not in the cast.' }] },
+      g_d1_good: { lesson: 'x'.repeat(5000) },
+    },
+  },
+  speakers,
+)
+ok(!hostile.scenes.g_invented, 'a script cannot add scenes')
+ok(hostile.scenes.g_d1.choices!.map(c => `${c.quality}>${c.consequenceSceneId}`).join() === g1.choices!.map(c => `${c.quality}>${c.consequenceSceneId}`).join(), 'a script cannot rewire a branch or change which option is strong')
+ok(hostile.scenes.g_d1.choices![0].text === 'Rewritten wording for this option.', 'a script can rewrite the words')
+ok(JSON.stringify(hostile.scenes.g_open.dialogue) === JSON.stringify(phishing.episode.scenes.g_open.dialogue), 'lines from speakers outside the cast are rejected')
+ok(hostile.scenes.g_d1_good.outcome!.lesson === phishing.episode.scenes.g_d1_good.outcome!.lesson, 'an oversized lesson is rejected')
+ok(validateEpisode(hostile).ok, 'the merged graph still validates')
+const leaky = applyScript(phishing.episode, { scenes: { g_d1: { choices: { [g1.choices![0].id]: 'This is the correct answer.' } } } }, speakers)
+ok(!validateEpisode(leaky).ok, 'a script that leaks correctness fails validation, so the generator discards it')
+
+/* ------------------------------------------------ engine: publishing */
+section('ENGINE · PUBLISHING GENERATED EPISODES')
+const genEp = phishing.episode
+const base0 = initialState()
+const invalid = structuredClone(genEp)
+invalid.scenes.g_d1.choices![0].consequenceSceneId = 'nowhere'
+ok(reducer(base0, { type: 'PUBLISH_EPISODE', episode: invalid, status: 'published' }) === base0, 'an invalid generated graph is refused at publish')
+ok(reducer(base0, { type: 'PUBLISH_EPISODE', episode: { ...structuredClone(firstDay), title: 'SHADOW' }, status: 'published' }) === base0, 'a generated graph cannot shadow an authored episode')
+
+let gp = play(base0, { type: 'PUBLISH_EPISODE', episode: genEp, status: 'published' }, { type: 'SELECT_EPISODE', episodeId: genEp.id }, { type: 'START_EPISODE' })
+ok(gp.published[genEp.id]?.provenance?.status === 'published' && gp.sceneId === genEp.entrySceneId, 'a published generated episode plays through the same reducer')
+gp = toPhase(gp, 'wager')
+ok(gp.sceneId === 'g_d1', `generated dialogue advances to the first decision (at ${gp.sceneId})`)
+const strong = genEp.scenes.g_d1.choices!.find(c => c.quality === 'best')!
+gp = play(gp, { type: 'SKIP_WAGER' }, { type: 'CHOOSE', choiceId: strong.id })
+ok(gp.sceneId === strong.consequenceSceneId, 'a generated choice follows its authored transition')
+
+const actThreeFor = (mastery: GameState['player']['mastery']) =>
+  reducer({ ...gp, sceneId: 'g_d2_good', phase: 'outcome', player: { ...gp.player, mastery } }, { type: 'CONTINUE' }).sceneId
+const [aScene, bScene] = PLAYER_LENSES.map(l => actThreeFor(l.mastery))
+ok(!!aScene && !!bScene && aScene !== bScene && aScene.startsWith('g_v_') && bScene.startsWith('g_v_'), `the reducer routes player A and B to different act threes (${aScene} / ${bScene})`)
+
+/* ------------------------------------------------ telemetry */
+section('RUN TELEMETRY + CALIBRATION')
+const rec = (quality: DecisionRecord['quality'], threat: ThreatProfile | undefined, ms: number, wager?: WagerResult): DecisionRecord => ({
+  sceneId: 'x', sceneTitle: 'x', choiceId: 'x', choiceLabel: 'x', ledgerLabel: 'x', quality, concepts: ['phishing'], scoreImpact: 0, msToDecide: ms, threat, wager,
+})
+const bet = (tier: WagerResult['tier'], won: boolean): WagerResult => ({ tier, staked: 100, payout: won ? 100 * MULTIPLIER[tier] : 0, multiplier: MULTIPLIER[tier], estimate: 0.5, won })
+const trusting = [
+  rec('best', { source: 'external', pressure: 'urgency' }, 6000, bet('allin', true)),
+  rec('best', { source: 'external', pressure: 'authority' }, 9000),
+  rec('poor', { source: 'internal', pressure: 'authority' }, 8200, bet('allin', false)),
+  rec('poor', { source: 'internal', pressure: 'peer' }, 5000, bet('risky', false)),
+  rec('best', { source: 'internal', pressure: 'peer' }, 6000),
+]
+const tt = analyseRun(trusting)
+ok(tt.bySource.external.rate === 1 && Math.abs(tt.bySource.internal.rate! - 1 / 3) < 1e-9, 'accuracy is split by threat source')
+ok(Math.round(tt.authoritySlowdownMs!) === 2933, `authority slowdown is measured (${tt.authoritySlowdownMs})`)
+ok(tt.weakness?.id === 'trusts_known_people', `the weakness is trusting known people (got ${tt.weakness?.id})`)
+const lead = describeTelemetry(tt)
+ok(lead[0] === 'You correctly identified 100% of external threats, but only 33% of requests involving coworkers.', `lead sentence: ${lead[0]}`)
+ok(/2\.9 seconds slower when authority pressure was introduced/.test(lead[1] ?? ''), `tempo sentence: ${lead[1]}`)
+ok(tt.calibration.verdict === 'overconfident', `big bets on poor calls read as overconfident (${tt.calibration.verdict})`)
+ok(calibration([rec('best', undefined, 1, bet('safe', true)), rec('best', undefined, 1, bet('safe', true))]).verdict === 'underconfident', 'safe bets on strong calls read as underconfident')
+ok(calibration([rec('best', undefined, 1, bet('risky', true)), rec('acceptable', undefined, 1, bet('risky', false))]).verdict === 'calibrated', 'bets that match performance read as calibrated')
+ok(calibration([rec('best', undefined, 1)]).verdict === 'no_data', 'no bets is no data, not a verdict')
+const untagged = analyseRun([rec('best', undefined, 1), rec('poor', undefined, 1)])
+ok(untagged.weakness === null && describeTelemetry(untagged).length === 0, 'untagged runs claim no pattern')
+
+const tc = await generateCoachAnalysis({ decisions: trusting, before: baselineMastery(), after: baselineMastery(), questionsAsked: 1, score: 50 })
+ok(tc.paragraphs[0].startsWith('You correctly identified 100% of external threats'), 'the coach leads with measured telemetry')
+ok(tc.paragraphs[0].includes('trusting requests that appear to come from people you already know'), 'the coach names the biggest weakness')
+ok(tc.headline === 'You catch attackers. You do not catch colleagues.', `coach headline: ${tc.headline}`)
+console.log(`  [telemetry] ${tc.paragraphs[0]}`)
+
+/* ------------------------------------------------ grounding trace */
+section('GROUNDING TRACE')
+ok(offTopic.grounding.status === 'refused' && !!offTopic.grounding.reason, `off-topic is refused and classified (${offTopic.grounding.reason})`)
+console.log(`  espresso -> ${offTopic.grounding.status} · ${offTopic.grounding.reason} · ${offTopic.grounding.explanation}`)
+ok(!offTopic.grounding.gatedBeforeModel, 'offline, no reply claims a model was gated')
+const onTopic = await askCharacter({ characterId: 'summer', question: 'Why was the email suspicious?', ctx, history: [] })
+ok(
+  onTopic.grounding.status === 'grounded' && onTopic.grounding.usedIds.length > 0 && onTopic.grounding.usedIds.every(id => onTopic.grounding.retrievedIds.includes(id)),
+  'a grounded reply only uses rules retrieval returned',
+)
+ok((await askCharacter({ characterId: 'morty', question: 'hey', ctx, history: [] })).grounding.status === 'social', 'small talk is classified as social, not grounded')
+const narrow = [knowledgeBase.find(k => k.id === 'K-PWD-01')!]
+const scoped = await askCharacter({ characterId: 'rick', question: 'Can I share my login with a teammate?', ctx, history: [], corpus: narrow })
+ok(scoped.retrieved.hits.every(h => h.item.id === 'K-PWD-01'), "retrieval is confined to the episode's own corpus")
+
+/* ------------------------------------------------ asset pipeline */
+section('ASSET PIPELINE · VIDEO PROVIDER SEAM')
+const plan = planEpisodeAssets(firstDay)
+const clips = plan.filter(i => i.kind === 'video')
+const stills = plan.filter(i => i.kind === 'image')
+const keyframes = stills.filter(i => i.key.startsWith('image:keyframe'))
+const lines = plan.filter(i => i.kind === 'audio')
+const visible = Object.values(firstDay.scenes).filter(s => !s.variants?.length).length
+ok(clips.length > 0 && clips.length <= 4, `clips are budgeted (${clips.length})`)
+ok(clips[0].sceneId === firstDay.entrySceneId, 'the cold open is the first clip')
+ok(!plan.some(i => i.sceneIds.includes('s3_gate')), 'adaptive gates get no assets')
+ok(stills.reduce((n, i) => n + i.sceneIds.length, 0) === visible, 'every visible scene gets exactly one scene image — a keyframe or a shared background')
+ok(keyframes.map(k => k.sceneId).join() === clips.map(c => c.sceneId).join(), 'every clip scene gets its own keyframe for image-to-video')
+ok(stills.length - keyframes.length < visible - clips.length, 'backgrounds are shared by look')
+
+const genClips = planEpisodeAssets(phishing.episode).filter(i => i.kind === 'video')
+ok(genClips.map(c => c.reason).join() === 'cold open,closing shot,confrontation,incident beat', `a generated episode clips its cold open, confrontation, incident and ending (${genClips.map(c => c.sceneId).join(', ')})`)
+ok(genClips.every(c => clipSeconds(phishing.episode.scenes[c.sceneId].shot) >= 5 && clipSeconds(phishing.episode.scenes[c.sceneId].shot) <= 8), 'every clip is 5–8 seconds')
+const motion = motionPrompt(phishing.episode.scenes.g_d1.shot)
+ok(
+  /push-in/.test(motion) && /reaches toward the keyboard/.test(motion) && /concern/.test(motion) && /In the background/.test(motion) && /Maintain the original composition/.test(motion),
+  `the motion prompt covers camera, action, expression, environment and continuity: ${motion}`,
+)
+ok(lines.length === Object.values(firstDay.scenes).flatMap(s => s.dialogue).filter(d => d.characterId !== 'you').length, 'every character line is planned for voice')
+console.log(`  first day: ${clips.length} clips · ${stills.length} backgrounds for ${visible - clips.length} scenes · ${lines.length} voiced lines`)
+
+const shot1 = firstDay.scenes.s1_arrival.shot
+const ctx1 = { episodeId: 'rm-ep01', sceneId: 's1_arrival' }
+const keyframe1: AssetRef = {
+  kind: 'image',
+  tier: 'generated',
+  provider: 'test',
+  url: '/api/media/assets/company/episodes/rm-ep01/backgrounds/s1_arrival.jpg',
+  storageKey: 'company/episodes/rm-ep01/backgrounds/s1_arrival.jpg',
+  createdAt: 'now',
+}
+const ctxImg = { ...ctx1, image: keyframe1 }
+const previs = new ProceduralPrevisProvider()
+const pj = await requestClip(shot1, ctx1, previs)
+ok(pj.status === 'ready' && pj.tier === 'procedural' && !pj.url, 'procedural previs resolves immediately, with no file')
+ok((await previs.getClipUrl(pj.id)) === null, 'procedural previs never returns a clip url')
+const withPrevis = attachAsset(firstDay, clips[0], clipToAsset(pj)!)
+ok(visualTierOf(withPrevis.scenes.s1_arrival.assets) === 'procedural', 'a procedural asset is reported as procedural, never as AI video')
+ok(!firstDay.scenes.s1_arrival.assets, 'attaching an asset never mutates the authored episode')
+ok(videoProvider().tier === 'procedural' && imageProvider().tier === 'procedural', 'with no media server the providers claim only the procedural tier')
+
+type Reply = { status: number; body: unknown }
+const fakeMedia = (routes: Record<string, Reply[]>) => async (url: string, init?: RequestInit) => {
+  const queue = routes[`${init?.method ?? 'GET'} ${url}`]
+  const next = queue && (queue.length > 1 ? queue.shift()! : queue[0])
+  if (!next) return new Response(JSON.stringify({ message: 'no route' }), { status: 404 })
+  return new Response(JSON.stringify(next.body), { status: next.status, headers: { 'content-type': 'application/json' } })
+}
+const clipKey = 'company/episodes/rm-ep01/videos/s1_arrival.mp4'
+const server = new ServerVideoProvider({
+  model: 'fal-ai/ltx-video',
+  base: 'http://media.test',
+  fetch: fakeMedia({
+    'POST http://media.test/video': [{ status: 202, body: { jobId: 'job-1', status: 'queued' } }],
+    'GET http://media.test/video/job-1': [
+      { status: 200, body: { status: 'rendering' } },
+      { status: 200, body: { status: 'ready', url: `/api/media/assets/${clipKey}`, storageKey: clipKey } },
+    ],
+  }),
+})
+ok(/generate visual assets first/.test((await requestClip(shot1, ctx1, server)).error ?? ''), 'image-to-video refuses to render without a generated scene image')
+const job = await requestClip(shot1, ctxImg, server)
+ok(job.status === 'queued' && job.tier === 'generated' && job.prompt === motionPrompt(shot1), "a real provider queues the render with the shot's motion prompt")
+let sentToMedia: { imageKey?: string; durationSec?: number } = {}
+const spy = new ServerVideoProvider({
+  model: 'm',
+  base: 'http://media.test',
+  fetch: async (_url, init) => {
+    sentToMedia = JSON.parse(String(init?.body ?? '{}'))
+    return new Response(JSON.stringify({ jobId: 'spy', status: 'queued' }), { status: 202 })
+  },
+})
+await requestClip(shot1, ctxImg, spy)
+ok(sentToMedia.imageKey === keyframe1.storageKey && sentToMedia.durationSec === 5, 'the browser sends the stored keyframe key and a 5 s duration — never a token or image bytes')
+ok(clipToAsset(job) === null, 'an unfinished render attaches nothing')
+const seen: string[] = []
+const rendered = await awaitClip(job, server, { sleep: async () => {}, onUpdate: j => seen.push(j.status) })
+ok(seen.join() === 'rendering,ready', `polling walks queued -> rendering -> ready (saw ${seen.join()})`)
+ok(rendered.url === `/api/media/assets/${clipKey}` && (await server.getClipUrl('job-1')) === rendered.url, 'the stored clip url comes back')
+const withClip = attachAsset(firstDay, clips[0], clipToAsset(rendered)!)
+ok(visualTierOf(withClip.scenes.s1_arrival.assets) === 'ai-video' && withClip.scenes.s1_arrival.assets!.video!.storageKey === clipKey, 'a generated clip attaches as AI video with its storage key')
+
+const unconfigured = new ServerVideoProvider({ model: 'm', base: 'http://media.test', fetch: fakeMedia({ 'POST http://media.test/video': [{ status: 503, body: { message: 'FAL_KEY is not configured on the media server.' } }] }) })
+const refusedJob = await requestClip(shot1, ctxImg, unconfigured)
+ok(refusedJob.status === 'failed' && /FAL_KEY/.test(refusedJob.error ?? ''), 'an unconfigured server fails honestly')
+const stuck = new ServerVideoProvider({
+  model: 'm',
+  base: 'http://media.test',
+  fetch: fakeMedia({ 'POST http://media.test/video': [{ status: 202, body: { jobId: 'job-2' } }], 'GET http://media.test/video/job-2': [{ status: 200, body: { status: 'rendering' } }] }),
+})
+const timedOut = await awaitClip(await requestClip(shot1, ctxImg, stuck), stuck, { sleep: async () => {}, intervalMs: 1000, timeoutMs: 3000 })
+ok(timedOut.status === 'failed' && /timed out/.test(timedOut.error ?? ''), 'a render that never finishes times out instead of hanging')
+const garbled = new ServerVideoProvider({
+  model: 'm',
+  base: 'http://media.test',
+  fetch: fakeMedia({ 'POST http://media.test/video': [{ status: 202, body: { jobId: 'job-3' } }], 'GET http://media.test/video/job-3': [{ status: 200, body: { status: 'done-ish' } }] }),
+})
+ok((await garbled.getStatus('job-3')).status === 'failed', 'an unknown status is a failure, not a success')
+const offline = new ServerVideoProvider({ model: 'm', base: 'http://media.test', fetch: async () => { throw new Error('ECONNREFUSED') } })
+ok((await requestClip(shot1, ctxImg, offline)).status === 'failed', 'an unreachable media server fails the job rather than throwing')
+
+const bg = await new ServerImageProvider({
+  model: 'fal-ai/flux/schnell',
+  base: 'http://media.test',
+  fetch: fakeMedia({ 'POST http://media.test/image': [{ status: 200, body: { url: '/api/media/assets/bg.jpg', storageKey: 'company/episodes/e/backgrounds/s.jpg' } }] }),
+}).generateBackground({ episodeId: 'e', sceneId: 's', prompt: 'p' })
+ok(bg.asset?.tier === 'generated' && bg.asset.kind === 'image' && !!bg.asset.url, 'a generated background comes back as a stored image asset')
+const voiced = await new ServerAudioProvider({
+  base: 'http://media.test',
+  fetch: fakeMedia({ 'POST http://media.test/audio': [{ status: 200, body: { url: '/api/media/assets/a.mp3', storageKey: 'k', voiceId: 'v1' } }] }),
+}).renderLine({ episodeId: 'e', sceneId: 's', lineIndex: 0, text: 'hi', character: characters.rick })
+ok(voiced.status === 'stored' && voiced.asset?.kind === 'audio', 'a pre-rendered line comes back as a stored audio asset')
+ok((await new RuntimeSpeechProvider().renderLine()).status === 'runtime', 'without ElevenLabs nothing claims to be pre-rendered')
+
+/* ------------------------------------------------ media server */
+section('MEDIA SERVER · STORAGE + HONEST CONFIG')
+const assetRoot = mkdtempSync(path.join(tmpdir(), 'onboard-assets-'))
+const mediaPort = 8900 + Math.floor(Math.random() * 90)
+const media = spawn(process.execPath, ['server/mediaServer.mjs'], {
+  env: { ...process.env, MEDIA_SERVER_PORT: String(mediaPort), REPLICATE_API_TOKEN: '', ASSET_ROOT: assetRoot, VOICE_PROXY_PORT: '1' },
+  stdio: 'ignore',
+})
+const mediaBase = `http://localhost:${mediaPort}/api/media`
+const post = (route: string, body: unknown) => fetch(`${mediaBase}/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+try {
+  let health: { video: { configured: boolean }; image: { configured: boolean }; audio: { configured: boolean } } | null = null
+  for (let i = 0; i < 50 && !health; i++) {
+    await new Promise(r => setTimeout(r, 100))
+    try { health = await (await fetch(`${mediaBase}/health`)).json() } catch { /* not up yet */ }
+  }
+  ok(!!health, 'media server starts')
+  ok(health?.video.configured === false && health?.image.configured === false, 'without REPLICATE_API_TOKEN, video and image report unconfigured')
+  ok(health?.audio.configured === false, 'without a reachable voice proxy, audio reports unconfigured')
+  ok((await post('video', { episodeId: 'e1', sceneId: 's1', prompt: 'p' })).status === 503, 'a render request without a key is refused, not faked')
+  const storedRes = await post('knowledge', { docId: 'security-notes', text: 'Report it.' })
+  const stored = (await storedRes.json()) as { url: string; storageKey: string }
+  ok(storedRes.ok && stored.storageKey === 'company/knowledge/security-notes.txt', 'an uploaded document gets an object-store key')
+  ok(readFileSync(path.join(assetRoot, stored.storageKey), 'utf8') === 'Report it.', 'the document is written under that key')
+  const served = await fetch(`http://localhost:${mediaPort}${stored.url}`)
+  ok(served.ok && (await served.text()) === 'Report it.', 'stored assets are served back')
+  ok((await post('knowledge', { docId: '../../etc', text: 'x' })).status === 400, 'path-shaped ids are rejected')
+  const traversal = await fetch(`http://localhost:${mediaPort}/api/media/assets/..%2F..%2Fpackage.json`)
+  ok(traversal.status === 400 || traversal.status === 404, `asset paths cannot escape the storage root (${traversal.status})`)
+} finally {
+  media.kill()
+  rmSync(assetRoot, { recursive: true, force: true })
+}
+
+/* ------------------------------------------------ fake Replicate */
+section('MEDIA SERVER · REPLICATE CONTRACT (fake Replicate API, no network)')
+const FAKE_TOKEN = 'r8_fake_token_for_tests_only'
+const replicateSeen: { url: string; auth?: string; body?: { input?: Record<string, unknown> } }[] = []
+let videoPolls = 0
+let throttledOnce = false
+const fakeReplicate = createServer(async (req, res) => {
+  const chunks: Buffer[] = []
+  for await (const c of req) chunks.push(c as Buffer)
+  const raw = Buffer.concat(chunks).toString('utf8')
+  replicateSeen.push({ url: req.url ?? '', auth: req.headers.authorization, body: raw ? JSON.parse(raw) : undefined })
+  const self = `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}`
+  const reply = (status: number, obj: unknown) => {
+    res.writeHead(status, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(obj))
+  }
+  const prompt = String(replicateSeen.at(-1)?.body?.input?.prompt ?? '')
+  if (req.url === '/v1/models/black-forest-labs/flux-schnell/predictions') return reply(201, { id: 'img-1', status: 'succeeded', output: [`${self}/files/frame.jpg`] })
+  if (req.url === '/v1/models/wan-video/wan-2.2-i2v-fast/predictions' && !throttledOnce) {
+    // Replicate's low-credit limit: burst 1. The first clip request is throttled once.
+    throttledOnce = true
+    return reply(429, { title: 'Request was throttled', status: 429, retry_after: 0.2 })
+  }
+  if (req.url === '/v1/models/wan-video/wan-2.2-i2v-fast/predictions') return reply(201, { id: prompt.includes('FORCE_FAILURE') ? 'vid-bad' : 'vid-1', status: 'starting' })
+  if (req.url === '/v1/predictions/vid-1') {
+    videoPolls++
+    return reply(200, videoPolls < 2 ? { id: 'vid-1', status: 'processing' } : { id: 'vid-1', status: 'succeeded', output: `${self}/files/clip.mp4` })
+  }
+  if (req.url === '/v1/predictions/vid-bad') return reply(200, { id: 'vid-bad', status: 'failed', error: 'input image flagged by safety checker' })
+  if (req.url === '/files/frame.jpg') { res.writeHead(200, { 'content-type': 'image/jpeg' }); return res.end('FAKEJPEG') }
+  if (req.url === '/files/clip.mp4') { res.writeHead(200, { 'content-type': 'video/mp4' }); return res.end('FAKEMP4') }
+  reply(404, { detail: 'not found' })
+})
+await new Promise<void>((r) => fakeReplicate.listen(0, '127.0.0.1', () => r()))
+const replicateRoot = mkdtempSync(path.join(tmpdir(), 'onboard-replicate-'))
+const replicatePort = 9100 + Math.floor(Math.random() * 90)
+const replicateMedia = spawn(process.execPath, ['server/mediaServer.mjs'], {
+  env: {
+    ...process.env,
+    MEDIA_SERVER_PORT: String(replicatePort),
+    REPLICATE_API_TOKEN: FAKE_TOKEN,
+    REPLICATE_API_BASE: `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}/v1`,
+    ASSET_ROOT: replicateRoot,
+    VOICE_PROXY_PORT: '1',
+  },
+  stdio: 'ignore',
+})
+const rBase = `http://localhost:${replicatePort}/api/media`
+const toBrowser: string[] = []
+const readBack = async (r: Response) => {
+  const t = await r.text()
+  toBrowser.push(t)
+  return JSON.parse(t)
+}
+const rPost = (route: string, body: unknown) => fetch(`${rBase}/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+try {
+  let rHealth: { video: { configured: boolean; model: string; mode: string } } | null = null
+  for (let i = 0; i < 50 && !rHealth; i++) {
+    await new Promise(r => setTimeout(r, 100))
+    try { rHealth = await readBack(await fetch(`${rBase}/health`)) } catch { /* not up yet */ }
+  }
+  ok(!!rHealth?.video.configured && rHealth.video.model === 'wan-video/wan-2.2-i2v-fast' && rHealth.video.mode === 'image-to-video', 'with a token the server reports Wan 2.2 image-to-video')
+
+  const img = await rPost('image', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'A glass lobby at dawn.' })
+  const imgBody = await readBack(img)
+  ok(img.ok && imgBody.storageKey === 'company/episodes/gen-test/backgrounds/g_open.jpg', 'a scene keyframe is generated and stored under backgrounds/')
+  ok(readFileSync(path.join(replicateRoot, imgBody.storageKey), 'utf8') === 'FAKEJPEG', 'the stored keyframe is the file Replicate returned')
+  const imgReq = replicateSeen.find(r => r.url.includes('flux-schnell'))
+  ok(imgReq?.auth === `Bearer ${FAKE_TOKEN}` && imgReq?.body?.input?.aspect_ratio === '16:9', 'the image request is authenticated server-side and asks for 16:9')
+
+  const noImage = await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'Slow push-in.' })
+  await readBack(noImage)
+  ok(noImage.status === 400, 'a clip request without a stored scene image is refused')
+  const escape = await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'x', imageKey: '../../package.json' })
+  await readBack(escape)
+  ok(escape.status === 400, 'a keyframe key outside storage is refused')
+
+  const vid = await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'Slow push-in toward the character.', imageKey: imgBody.storageKey, durationSec: 6 })
+  const vidBody = await readBack(vid)
+  ok(vid.status === 202 && vidBody.status === 'queued', `a clip job is queued (${vid.status} ${vidBody.status})`)
+ok(replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length === 2, 'a throttled (429) prediction is retried after retry_after instead of failing the clip')
+  const input = replicateSeen.find(r => r.url.includes('wan-2.2-i2v-fast'))?.body?.input ?? {}
+  ok(input.image === `data:image/jpeg;base64,${Buffer.from('FAKEJPEG').toString('base64')}`, 'Wan receives the stored keyframe as its input image')
+  ok(
+    input.prompt === 'Slow push-in toward the character.' && input.num_frames === 97 && input.frames_per_second === 16 && input.resolution === '480p',
+    `Wan receives the motion prompt and a short clip spec (${input.num_frames} frames @ ${input.frames_per_second} fps)`,
+  )
+  const seenStatuses: string[] = []
+  let latest = vidBody
+  for (let i = 0; i < 10 && !['ready', 'failed'].includes(latest.status); i++) {
+    latest = await readBack(await fetch(`${rBase}/video/${vidBody.jobId}`))
+    seenStatuses.push(latest.status)
+  }
+  ok(seenStatuses.join() === 'rendering,ready', `the job walks queued -> rendering -> ready (saw ${seenStatuses.join()})`)
+  ok(
+    latest.storageKey === 'company/episodes/gen-test/videos/g_open.mp4' && readFileSync(path.join(replicateRoot, latest.storageKey), 'utf8') === 'FAKEMP4',
+    'the clip is downloaded into videos/',
+  )
+  const ranged = await fetch(`http://localhost:${replicatePort}${latest.url}`, { headers: { range: 'bytes=0-3' } })
+  ok(ranged.status === 206 && ranged.headers.get('content-type') === 'video/mp4' && (await ranged.text()) === 'FAKE', 'the stored clip is served with range support for <video>')
+
+  const bad = await readBack(await rPost('video', { episodeId: 'gen-test', sceneId: 'g_end', prompt: 'FORCE_FAILURE', imageKey: imgBody.storageKey }))
+  const badStatus = await readBack(await fetch(`${rBase}/video/${bad.jobId}`))
+  ok(badStatus.status === 'failed' && /safety checker/.test(badStatus.error ?? ''), 'a failed prediction is reported as failed, with its reason')
+
+  const client = new ServerVideoProvider({ model: 'wan-video/wan-2.2-i2v-fast', base: rBase })
+  const clientJob = await requestClip(
+    phishing.episode.scenes.g_d1.shot,
+    { episodeId: 'gen-test', sceneId: 'g_d1', image: { kind: 'image', tier: 'generated', provider: 'test', storageKey: imgBody.storageKey, createdAt: 'now' } },
+    client,
+  )
+  const clientDone = await awaitClip(clientJob, client, { sleep: async () => {} })
+  const clientAsset = clipToAsset(clientDone)
+  ok(clientAsset?.tier === 'generated' && clientAsset.storageKey === 'company/episodes/gen-test/videos/g_d1.mp4', 'the browser-side provider drives the same server contract to a stored clip asset')
+  ok(toBrowser.every(b => !b.includes(FAKE_TOKEN)), 'the token never appears in any response the browser can see')
+} finally {
+  replicateMedia.kill()
+  fakeReplicate.close()
+  rmSync(replicateRoot, { recursive: true, force: true })
+}
+
+/* ------------------------------------------------ suggested questions */
+section('SUGGESTED QUESTIONS · EVERY CHIP IS ANSWERABLE')
+ok(CONFIDENCE_FLOOR === 0.3 && SPECIFICITY_FLOOR === 0.6, 'refusal thresholds are unchanged')
+const chipContexts = [
+  ...concepts.map(c => ({ label: c.id, ctx: { ...ctx, activeConcepts: [c.id] }, corpus: undefined as KnowledgeItem[] | undefined })),
+  { label: 'first day scene', ctx, corpus: undefined as KnowledgeItem[] | undefined },
+  ...[phishing, custom].map(g => ({ label: g.episode.id, ctx: { ...ctx, activeConcepts: g.episode.concepts }, corpus: corpusFor(g.episode.knowledge) })),
+]
+let chipCount = 0
+for (const { label, ctx: chipCtx, corpus } of chipContexts) {
+  const chips = suggestedQuestions(chipCtx, corpus)
+  ok(chips.length > 0, `${label}: offers at least one question`)
+  for (const q of chips) {
+    chipCount++
+    const reply = await askCharacter({ characterId: 'summer', question: q, ctx: chipCtx, history: [], corpus })
+    ok(reply.kind !== 'refusal' && reply.grounding.status !== 'refused', `${label}: chip "${q}" is answered, not refused (conf ${reply.confidence.toFixed(2)})`)
+  }
+}
+console.log(`  ${chipCount} chips offered across ${chipContexts.length} contexts · every one answered`)
+const stillRefused = await askCharacter({ characterId: 'summer', question: 'What is the password for the espresso machine on floor two?', ctx, history: [] })
+ok(stillRefused.grounding.status === 'refused' && stillRefused.grounding.reason === 'out_of_scope', `unsupported questions are still refused out of scope (${stillRefused.grounding.reason})`)
 
 
 console.log('\n' + (fails === 0 ? '✅ ALL CHECKS PASSED' : `❌ ${fails} CHECK(S) FAILED`))

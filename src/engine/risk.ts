@@ -1,12 +1,17 @@
 import type { ConceptId, Mastery, Scene } from '@/types'
 
 /* ============================================================================
- * RISK TERMINAL — virtual credits only.
+ * WAGER — virtual credits only.
  *
- * No real money, no deposits, no cash-out, no external wallet. Credits exist
- * for exactly one reason: to force the player to price their own confidence
- * before they answer. The estimate they are betting against is their own
- * mastery model, so a bad bet is informative rather than punitive.
+ * No real money, no deposits, no cash-out, no external wallet. Three fixed
+ * bets the player can read at a glance: SAFE 1.2×, RISKY 2×, ALL IN 4×.
+ *
+ * The outcome is decided by the authored quality of the choice the player
+ * makes — never by chance and never by a model. The mastery estimate is still
+ * computed, but it is recorded silently and only revealed after the world
+ * reacts, so the player prices their own confidence without being anchored.
+ * Tier-implied confidence vs actual outcome feeds the calibration model
+ * (src/engine/telemetry.ts).
  * ========================================================================== */
 
 export type WagerTier = 'safe' | 'risky' | 'allin'
@@ -15,13 +20,25 @@ export interface WagerOption {
   tier: WagerTier
   label: string
   stake: number
+  /** Total returned on a win: stake × multiplier. */
   reward: number
-  blurb: string
+  multiplier: number
 }
 
+export const MULTIPLIER: Record<WagerTier, number> = { safe: 1.2, risky: 2, allin: 4 }
+
+/** How sure each bet says the player is. Feeds calibration, never the payout. */
+export const TIER_CONFIDENCE: Record<WagerTier, number> = { safe: 0.55, risky: 0.75, allin: 0.95 }
+
+const LABEL: Record<WagerTier, string> = { safe: 'SAFE', risky: 'RISKY', allin: 'ALL IN' }
+
+/** Share of the balance each tier puts at risk. */
+const STAKE_SHARE: Record<WagerTier, number> = { safe: 0.1, risky: 0.3, allin: 1 }
+
 /**
- * The house's estimate that the player will pick the best option — derived from
- * the same mastery model that drives adaptation, not from a random number.
+ * The mastery model's estimate that the player picks the best option. Hidden
+ * before the bet, revealed after — derived from the same scores that drive
+ * adaptation, not from a random number.
  */
 export function estimateSuccess(
   scene: Scene,
@@ -39,34 +56,16 @@ export function estimateSuccess(
   return { p: Math.round(p * 100) / 100, drivers }
 }
 
-export function wagerOptions(credits: number, p: number): WagerOption[] {
-  const safe = Math.max(25, Math.round((credits * 0.04) / 5) * 5)
-  const risky = Math.max(safe * 3, Math.round((credits * 0.16) / 5) * 5)
-  // Fair-odds inverse of the estimate, minus a small edge. Long shots pay more.
-  const mult = (stakeFactor: number) => 1 + (1 / Math.max(0.18, p) - 1) * stakeFactor
-  return [
-    {
-      tier: 'safe',
-      label: 'SAFE',
-      stake: safe,
-      reward: Math.round(safe * mult(0.55)),
-      blurb: 'Low exposure. You are fairly sure.',
-    },
-    {
-      tier: 'risky',
-      label: 'RISKY',
-      stake: Math.min(risky, credits),
-      reward: Math.round(Math.min(risky, credits) * mult(0.95)),
-      blurb: 'You have read the situation and you trust it.',
-    },
-    {
-      tier: 'allin',
-      label: 'ALL IN',
-      stake: credits,
-      reward: Math.round(credits * mult(1.45)),
-      blurb: 'Total conviction. No hedge.',
-    },
-  ]
+const round5 = (n: number) => Math.round(n / 5) * 5
+
+export function wagerOptions(credits: number): WagerOption[] {
+  let floor = 0
+  return (['safe', 'risky', 'allin'] as const).map((tier) => {
+    const raw = tier === 'allin' ? credits : Math.max(floor + 5, 10, round5(credits * STAKE_SHARE[tier]))
+    const stake = Math.min(credits, raw)
+    floor = stake
+    return { tier, label: LABEL[tier], stake, multiplier: MULTIPLIER[tier], reward: Math.round(stake * MULTIPLIER[tier]) }
+  })
 }
 
 export type WagerVerdict = 'win' | 'push' | 'loss'

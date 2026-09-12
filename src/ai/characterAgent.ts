@@ -1,4 +1,5 @@
 import { getCharacter } from '@/content/characters'
+import { knowledgeBase } from '@/content/knowledge'
 import type { Character, ChatTurn, ConceptId, KnowledgeItem, SpeechArchetype } from '@/types'
 import { complete, isLive, LLMUnavailable } from './llm'
 import { CONFIDENCE_FLOOR, retrieve, tokenize, type RetrievalResult } from './retrieval'
@@ -38,6 +39,74 @@ export interface CharacterReply {
   /** Exactly what the LLM was (or would be) sent. Rendered by the inspector. */
   promptPreview: string
   retrieved: RetrievalResult
+  /** Why the answer was allowed or refused. Rendered by the inspector. */
+  grounding: GroundingTrace
+}
+
+/* ---------------------------------------------------------------- grounding */
+
+export type GroundingStatus = 'grounded' | 'refused' | 'social'
+
+/**
+ *   no_match       nothing in the corpus shares a meaningful term
+ *   out_of_scope   most of the question's vocabulary is absent from the corpus
+ *   weak_evidence  on-topic words, but the nearest rule does not answer it
+ */
+export type RefusalReason = 'no_match' | 'out_of_scope' | 'weak_evidence'
+
+export interface GroundingTrace {
+  status: GroundingStatus
+  reason?: RefusalReason
+  explanation: string
+  intent: Intent
+  floor: number
+  confidence: number
+  retrievedIds: string[]
+  /** The rules the reply actually leaned on. */
+  usedIds: string[]
+  /** The refusal was enforced by retrieval before any model was called. */
+  gatedBeforeModel: boolean
+}
+
+const pct = (n: number) => `${Math.round(n * 100)}%`
+
+export function classifyRefusal(r: RetrievalResult): RefusalReason {
+  if (!r.hits.length) return 'no_match'
+  if (r.signals.oovRatio >= 0.5) return 'out_of_scope'
+  return 'weak_evidence'
+}
+
+function traceGrounding(intent: Intent, r: RetrievalResult, usedIds: string[], gatedBeforeModel: boolean): GroundingTrace {
+  const base = {
+    intent,
+    floor: CONFIDENCE_FLOOR,
+    confidence: r.confidence,
+    retrievedIds: r.hits.map((h) => h.item.id),
+    usedIds,
+    gatedBeforeModel,
+  }
+  if (intent === 'greeting')
+    return { ...base, status: 'social', explanation: 'Small talk — no company policy was asserted, so nothing needed grounding.' }
+  if (r.confidence >= CONFIDENCE_FLOOR)
+    return {
+      ...base,
+      status: 'grounded',
+      explanation: `Confidence ${pct(r.confidence)} cleared the ${pct(CONFIDENCE_FLOOR)} floor. The reply may only assert ${usedIds.join(', ') || 'the retrieved rules'}.`,
+    }
+  const reason = classifyRefusal(r)
+  const top = r.hits[0]
+  const why =
+    reason === 'no_match'
+      ? 'No rule in the company material shares a meaningful term with the question.'
+      : reason === 'out_of_scope'
+        ? `${pct(r.signals.oovRatio)} of the question's terms appear nowhere in the company material — it is about something the knowledge base does not cover.`
+        : `The nearest rule, ${top.item.id} (${top.item.topic}), is only ${top.relevance.toFixed(2)} relevant — not enough evidence to answer.`
+  return {
+    ...base,
+    status: 'refused',
+    reason,
+    explanation: `${why} Confidence ${pct(r.confidence)} is under the ${pct(CONFIDENCE_FLOOR)} floor${gatedBeforeModel ? ', so the model was never called' : ''}.`,
+  }
 }
 
 /* ------------------------------------------------------------ prompt assembly */
@@ -91,7 +160,7 @@ export function buildSystemPrompt(
 
 /* --------------------------------------------------------- intent classifier */
 
-type Intent = 'greeting' | 'why' | 'how' | 'whatif' | 'objection' | 'permission' | 'whatdo' | 'meta' | 'explain'
+export type Intent = 'greeting' | 'why' | 'how' | 'whatif' | 'objection' | 'permission' | 'whatdo' | 'meta' | 'explain'
 
 function classify(q: string): Intent {
   const s = q.toLowerCase().trim()
@@ -330,39 +399,52 @@ function composeGrounded(
 
 /* --------------------------------------------------------------- public API */
 
-export async function askCharacter(args: {
-  characterId: string
-  question: string
-  ctx: SceneContext
-  history: ChatTurn[]
-}): Promise<CharacterReply> {
-  const ch = getCharacter(args.characterId)
-
-  const intent = classify(args.question)
-
+/**
+ * The retrieval decision for one question — the single definition both the
+ * answer path and the suggestion chips use, so a chip can never promise an
+ * answer the character will then refuse.
+ */
+export function retrieveForQuestion(question: string, ctx: SceneContext, corpus?: KnowledgeItem[]): RetrievalResult {
+  const intent = classify(question)
   /* Retrieve on the question as asked. Query expansion is a RECOVERY step, not
    * the default: folding the scene context into every query drags strong
    * scene-adjacent rules over the one the player actually asked about. */
-  let r = retrieve(args.question, { activeConcepts: args.ctx.activeConcepts, k: 3 })
+  let r = retrieve(question, { activeConcepts: ctx.activeConcepts, k: 3, corpus })
   /* Only questions that are *about the current moment* get expanded — "what
    * should I have done", "what now". A question with its own subject that simply
    * is not covered by the knowledge base must be allowed to fail, so the
    * character declines instead of answering a scene-adjacent rule. */
   const deictic = intent === 'meta' || intent === 'whatdo'
-  if (r.confidence < CONFIDENCE_FLOOR && deictic && tokenize(args.question).length < 4) {
-    const expanded = [
-      args.question,
-      args.ctx.activeConcepts.join(' ').replace(/_/g, ' '),
-      args.ctx.lastChoiceText ?? '',
-    ].join(' ')
-    const retry = retrieve(expanded, { activeConcepts: args.ctx.activeConcepts, k: 3 })
+  if (r.confidence < CONFIDENCE_FLOOR && deictic && tokenize(question).length < 4) {
+    const expanded = [question, ctx.activeConcepts.join(' ').replace(/_/g, ' '), ctx.lastChoiceText ?? ''].join(' ')
+    const retry = retrieve(expanded, { activeConcepts: ctx.activeConcepts, k: 3, corpus })
     if (retry.confidence > r.confidence) r = retry
   }
-  const system = buildSystemPrompt(ch, args.ctx, r)
-  // The live path sees every retrieved rule, so it may cite any of them.
-  const citations = r.confidence >= CONFIDENCE_FLOOR ? r.hits.map((h) => h.item.id) : []
+  return r
+}
 
-  if (isLive()) {
+export async function askCharacter(args: {
+  characterId: string
+  question: string
+  ctx: SceneContext
+  history: ChatTurn[]
+  /** The episode's own knowledge; defaults to the shipped base. */
+  corpus?: KnowledgeItem[]
+}): Promise<CharacterReply> {
+  const ch = getCharacter(args.characterId)
+  const corpus = args.corpus
+
+  const intent = classify(args.question)
+  const r = retrieveForQuestion(args.question, args.ctx, corpus)
+  const system = buildSystemPrompt(ch, args.ctx, r)
+  const allowed = r.confidence >= CONFIDENCE_FLOOR
+  // The live path sees every retrieved rule, so it may cite any of them.
+  const citations = allowed ? r.hits.map((h) => h.item.id) : []
+
+  /* The refusal gate sits in front of the model, not inside its prompt. Below
+   * the floor there is no evidence to ground an answer in, so the model is
+   * never asked — a prompt instruction is a request; this is a guarantee. */
+  if (isLive() && (allowed || intent === 'greeting')) {
     try {
       const messages = [
         ...args.history
@@ -372,15 +454,17 @@ export async function askCharacter(args: {
         { role: 'user' as const, content: args.question },
       ]
       const text = await complete({ system, messages, maxTokens: 220, temperature: 0.7 })
+      const greeting = intent === 'greeting'
       return {
         text,
-        kind: intent === 'greeting' ? 'greeting' : citations.length ? 'answer' : 'refusal',
-        citations,
-        grounded: citations.length > 0,
+        kind: greeting ? 'greeting' : 'answer',
+        citations: greeting ? [] : citations,
+        grounded: greeting || citations.length > 0,
         confidence: r.confidence,
         source: 'llm',
         promptPreview: system,
         retrieved: r,
+        grounding: traceGrounding(intent, r, greeting ? [] : citations, false),
       }
     } catch (e) {
       if (!(e instanceof LLMUnavailable)) throw e
@@ -401,11 +485,27 @@ export async function askCharacter(args: {
     source: 'local',
     promptPreview: system,
     retrieved: r,
+    grounding: traceGrounding(intent, r, used, isLive() && kind === 'refusal'),
   }
 }
 
-/** Question chips offered under the chat input, drawn from live scene concepts. */
-export function suggestedQuestions(ctx: SceneContext): string[] {
+/**
+ * Question chips offered under the chat input.
+ *
+ * A chip is a promise that the character can answer. Candidates come from the
+ * live scene's concepts and from the loaded knowledge itself, and every one is
+ * put through retrieveForQuestion() — the same decision the answer path makes,
+ * at the same floor. Candidates that would be refused are dropped, never shown.
+ */
+export function suggestedQuestions(ctx: SceneContext, corpus?: KnowledgeItem[]): string[] {
+  const authored = authoredChips(ctx)
+  const rules = (corpus ?? knowledgeBase).filter((k) => k.concepts.some((c) => ctx.activeConcepts.includes(c)))
+  const derived = rules.flatMap((k) => [`Why does the “${strip(k.topic)}” rule matter?`, `What do people get wrong about “${strip(k.topic)}”?`])
+  const answerable = (q: string) => retrieveForQuestion(q, ctx, corpus).confidence >= CONFIDENCE_FLOOR
+  return [...new Set([...authored, 'What should I have done?', ...derived])].filter(answerable).slice(0, 4)
+}
+
+function authoredChips(ctx: SceneContext): string[] {
   const base: Record<ConceptId, string[]> = {
     phishing: ['Why was that email suspicious?', 'But the sender looked internal. Why would it be phishing?'],
     password_security: ['Why can’t I just share my login once?', 'What if it is genuinely an emergency?'],
@@ -415,8 +515,5 @@ export function suggestedQuestions(ctx: SceneContext): string[] {
     social_engineering: ['How was I supposed to tell it was fake?', 'What if the voice is someone I know?'],
     physical_security: ['Is holding a door really a security problem?', 'What do I do about an unlocked laptop?'],
   }
-  const out: string[] = []
-  for (const c of ctx.activeConcepts) out.push(...(base[c] ?? []))
-  out.push('What should I have done?')
-  return [...new Set(out)].slice(0, 4)
+  return ctx.activeConcepts.flatMap((c) => base[c] ?? [])
 }

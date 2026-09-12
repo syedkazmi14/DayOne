@@ -8,9 +8,10 @@ import type { Choice, Episode, Scene, ShotSpec } from '@/types'
  * what happens. LLMs are used for (a) generating graphs like this one from
  * company material at authoring time, and (b) in-character conversation.
  *
- * `shot.prompt` is the text an authoring pipeline would hand to a video
- * generation API. `shot.videoUrl` is filled once a clip is pre-rendered, and
- * the player never waits for one — the procedural cinematic renderer stands in.
+ * `shot` is the shot specification: the prompt the Studio hands to a video or
+ * image provider (src/media). Generated files attach as `Scene.assets`; the
+ * player never waits for one, and without them the procedural renderer draws
+ * the shot. `threat` tags each decision's risk shape for run telemetry.
  * ========================================================================== */
 
 const shot = (
@@ -96,6 +97,7 @@ const act1: Scene[] = [
     kind: 'decision',
     act: 1,
     title: 'THE SUSPICIOUS EMAIL',
+    threat: { source: 'external', pressure: 'urgency' },
     shot: shot(
       'desk',
       'morning',
@@ -238,6 +240,7 @@ const act2: Scene[] = [
     kind: 'decision',
     act: 2,
     title: 'THE EXPORT',
+    threat: { source: 'internal', pressure: 'peer' },
     shot: shot(
       'open_office',
       'midday',
@@ -397,6 +400,7 @@ const act3: Scene[] = [
     kind: 'decision',
     act: 3,
     title: 'BORROWED ACCESS',
+    threat: { source: 'internal', pressure: 'authority' },
     shot: shot('desk', 'dusk', 'tense', 'Insert: an SSO prompt on screen, a hand hovering over a keyboard that is not the owner’s. Held too long.'),
     dialogue: [{ characterId: 'rick', line: 'Customers are seeing errors while we discuss this.' }],
     prompt: 'WHAT DO YOU DO?',
@@ -514,6 +518,7 @@ const act3: Scene[] = [
     kind: 'decision',
     act: 3,
     title: 'THE SIX DIGITS',
+    threat: { source: 'external', pressure: 'authority' },
     shot: shot('desk', 'dusk', 'tense', 'Insert: authenticator app, six digits, countdown ring draining. Held on the shrinking circle.'),
     dialogue: [{ characterId: 'rick', line: 'Still there? Twenty seconds.' }],
     prompt: 'WHAT DO YOU DO?',
@@ -630,6 +635,7 @@ const act3: Scene[] = [
     kind: 'decision',
     act: 3,
     title: 'THE FULL TABLE',
+    threat: { source: 'internal', pressure: 'authority' },
     shot: shot('open_office', 'dusk', 'tense', 'Insert: a query editor, SELECT * with no WHERE clause, row count climbing past two hundred thousand. Cursor over EXPORT.'),
     dialogue: [{ characterId: 'jerry', line: 'I have a taxi in four minutes.' }],
     prompt: 'WHAT DO YOU DO?',
@@ -753,6 +759,7 @@ const act4: Scene[] = [
     kind: 'decision',
     act: 4,
     title: 'FOUR DAYS LATE',
+    threat: { source: 'internal', pressure: 'peer' },
     shot: shot('night_office', 'night', 'tense', 'Two-shot on the landing, both faces half in shadow. The decision sits in the silence between them.'),
     dialogue: [{ characterId: 'morty', line: 'What would you do?' }],
     prompt: 'WHAT DO YOU DO?',
