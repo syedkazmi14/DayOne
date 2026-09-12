@@ -6,6 +6,10 @@
   :root {
     color-scheme: dark;
     --ease-cine: cubic-bezier(0.16, 1, 0.3, 1);
+    /* One radius for every surface. Small on purpose: enough to read as
+     * finished, not enough to soften the cinematic frame. The letterbox bars,
+     * scene canvas and full-bleed artwork stay square. */
+    --radius: 4px;
   }
 
   html,
@@ -18,7 +22,6 @@
     @apply bg-ink-900 text-bone antialiased;
     margin: 0;
     overflow: hidden;
-    font-feature-settings: 'cv11', 'ss01';
     text-rendering: optimizeLegibility;
   }
 
@@ -65,11 +68,13 @@
     background: linear-gradient(180deg, rgba(237, 233, 226, 0.055), rgba(237, 233, 226, 0.018));
     border: 1px solid rgba(237, 233, 226, 0.1);
     backdrop-filter: blur(18px) saturate(1.1);
+    border-radius: var(--radius);
   }
   .glass-strong {
     background: linear-gradient(180deg, rgba(10, 11, 14, 0.86), rgba(10, 11, 14, 0.72));
     border: 1px solid rgba(237, 233, 226, 0.12);
     backdrop-filter: blur(26px) saturate(1.15);
+    border-radius: var(--radius);
   }
   .hairline {
     box-shadow: inset 0 1px 0 rgba(237, 233, 226, 0.07);
@@ -109,7 +114,7 @@
 
   /* Choice button — deliberate, mechanical, no glow soup. */
   .choice {
-    @apply relative w-full overflow-hidden text-left transition-all duration-300;
+    @apply relative w-full overflow-hidden rounded text-left transition-all duration-300;
     background: linear-gradient(100deg, rgba(237, 233, 226, 0.05), rgba(237, 233, 226, 0.015));
     border: 1px solid rgba(237, 233, 226, 0.12);
   }

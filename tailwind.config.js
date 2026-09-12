@@ -24,10 +24,12 @@ export default {
         good: { DEFAULT: '#54D1A0', deep: '#1F6B4F' },
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        sans: ['DM Sans', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       letterSpacing: { ultra: '0.15em', mega: '0.24em' },
+      // `rounded` is the only radius in the app. See --radius in index.css.
+      borderRadius: { DEFAULT: 'var(--radius)' },
       keyframes: {
         grain: {
           '0%,100%': { transform: 'translate(0,0)' },
