@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative h-full w-full overflow-hidden bg-ink-900">
       {!inScene && (
-        <header className="absolute inset-x-0 top-0 z-30 flex items-center gap-6 px-6 py-4 sm:px-10">
+        <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-6 bg-gradient-to-b from-ink-900 via-ink-900/85 to-transparent px-6 pb-8 pt-4 sm:px-10 [&>*]:pointer-events-auto">
           <button onClick={() => dispatch({ type: 'GOTO', view: 'home' })} className="flex items-baseline gap-2.5">
             <span className="font-sans text-[15px] font-black uppercase tracking-[0.34em] text-bone">ONBOARD</span>
             <span className="hidden font-mono text-[9px] uppercase tracking-[0.2em] text-bone-faint sm:inline">

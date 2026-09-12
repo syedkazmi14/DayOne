@@ -20,6 +20,18 @@ export default defineConfig({
       '/api/voice': {
         target: `http://localhost:${VOICE_PROXY_PORT}`,
         changeOrigin: true,
+        /* The voice proxy is optional. Without this hook a missing target
+         * surfaces as a 500, which reads like an application fault; the app
+         * already treats 503 as "not configured" and falls back to the
+         * browser speech engine. */
+        configure: (proxy) => {
+          proxy.on('error', (_err, _req, res) => {
+            const r = res as unknown as { headersSent?: boolean; writeHead?: Function; end?: Function }
+            if (!r?.writeHead || r.headersSent) return
+            r.writeHead(503, { 'content-type': 'application/json' })
+            r.end(JSON.stringify({ error: 'not_configured', message: 'Voice proxy is not running.' }))
+          })
+        },
       },
     },
   },

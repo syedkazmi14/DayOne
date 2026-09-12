@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Character } from '@/types'
 import { CharacterPortrait } from './CharacterPortrait'
 
@@ -47,12 +47,26 @@ export function CharacterAvatar({
 }: Props) {
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const imgRef = useRef<HTMLImageElement>(null)
   const src = character.avatar?.src
 
-  // A character swap must not inherit the previous one's error state.
+  /**
+   * A cached image can finish loading before React attaches `onLoad` — on a
+   * re-mount with a warm cache that handler never fires, and the fade-in would
+   * leave the image invisible forever. So reconcile against the element's own
+   * `complete`/`naturalWidth` after every commit, and keep `onLoad`/`onError`
+   * for the cold path.
+   */
   useEffect(() => {
-    setFailed(false)
+    const el = imgRef.current
+    if (el?.complete) {
+      setLoaded(el.naturalWidth > 0)
+      setFailed(el.naturalWidth === 0)
+      return
+    }
+    // Cold load, or a character swap: do not inherit the previous state.
     setLoaded(false)
+    setFailed(false)
   }, [src])
 
   const height = Math.round(size * ratio)
@@ -83,6 +97,7 @@ export function CharacterAvatar({
         }}
       />
       <img
+        ref={imgRef}
         src={src}
         alt={character.avatar?.alt ?? character.name}
         {...(fill ? {} : { width: size, height })}

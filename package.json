@@ -11,9 +11,10 @@
     "build": "tsc -b --noCheck && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "verify": "npm run verify:content && npm run verify:walkthrough",
+    "verify": "npm run verify:content && npm run verify:walkthrough && npm run verify:visual",
     "verify:content": "esbuild scripts/validate.ts --bundle --platform=node --format=esm --target=node20 --outfile=scripts/.out/validate.mjs --alias:@=./src --log-level=error && node scripts/.out/validate.mjs",
-    "verify:walkthrough": "esbuild scripts/walkthrough.tsx --bundle --platform=node --format=esm --target=node20 --outfile=scripts/.out/walk.mjs --alias:@=./src --external:jsdom --define:process.env.NODE_ENV='\"development\"' --log-level=error && node scripts/.out/walk.mjs"
+    "verify:walkthrough": "esbuild scripts/walkthrough.tsx --bundle --platform=node --format=esm --target=node20 --outfile=scripts/.out/walk.mjs --alias:@=./src --external:jsdom --define:process.env.NODE_ENV='\"development\"' --log-level=error && node scripts/.out/walk.mjs",
+    "verify:visual": "node scripts/visual.mjs"
   },
   "dependencies": {
     "framer-motion": "^11.11.17",
@@ -27,12 +28,13 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "esbuild": "^0.21.5",
     "jsdom": "^30.0.1",
     "postcss": "^8.4.49",
+    "puppeteer-core": "^23.11.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11",
-    "esbuild": "^0.21.5"
+    "vite": "^5.4.11"
   },
   "allowScripts": {
     "esbuild@0.21.5": true

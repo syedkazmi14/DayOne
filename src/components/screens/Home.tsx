@@ -1,20 +1,20 @@
 import { motion } from 'framer-motion'
 import { Clock, Lock, Play } from 'lucide-react'
 import { episodesForGroup, featuredEpisode } from '@/content/episodes'
-import { getCharacter } from '@/content/characters'
 import { useGame } from '@/engine/gameStore'
 import { overallKnowledge } from '@/engine/adaptive'
-import { CharacterCarousel } from '../CharacterCarousel'
+import { CastSwitcher } from '../CastSwitcher'
 import { Chip, Eyebrow } from '../ui/Bits'
-import { CharacterAvatar } from '../ui/CharacterAvatar'
 import { EpisodeStill } from '../ui/EpisodeStill'
 
 /* ============================================================================
  * The lobby. First impression has to read "interactive show", not "LMS".
  *
- * Everything on this screen is derived from the group the carousel is resting
- * on: the hero, the cast strip and the episode shelf. Nothing about the number
- * of groups or characters is encoded here — see src/content/characterGroups.ts.
+ * Two things, and only two: the featured episode as a full-bleed hero with the
+ * cast switcher in its corner, and the episode shelf underneath. Both read the
+ * selected group, so switching the cast reshelves the episodes. Nothing about
+ * the number of groups or characters is encoded here — see
+ * src/content/characterGroups.ts.
  * ========================================================================== */
 
 export function Home() {
@@ -27,7 +27,7 @@ export function Home() {
   return (
     <div className="relative h-full overflow-y-auto">
       {/* hero */}
-      <div className="relative min-h-[68vh] w-full overflow-hidden">
+      <div className="relative min-h-[58vh] w-full overflow-hidden">
         {featured ? (
           <EpisodeStill episode={featured} sceneKey={`home-hero-${featured.id}`} priority />
         ) : (
@@ -36,7 +36,7 @@ export function Home() {
         <div className="absolute inset-0 bg-gradient-to-r from-ink-900 via-ink-900/80 to-ink-900/30" />
         <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-ink-900 to-transparent" />
 
-        <div className="relative flex min-h-[68vh] flex-col justify-center px-6 py-16 sm:px-12 lg:px-20">
+        <div className="relative flex min-h-[58vh] flex-col justify-center px-6 py-16 sm:px-12 lg:px-20">
           <motion.div
             key={group.id}
             initial={{ opacity: 0, y: 24 }}
@@ -97,46 +97,14 @@ export function Home() {
             </div>
           </motion.div>
 
-          {/* cast strip — the group's four, or the one the player picked */}
-          <motion.div
-            key={`cast-${group.id}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4, duration: 0.8 }}
-            className="pointer-events-none absolute bottom-8 right-6 hidden items-end gap-2 lg:flex"
-          >
-            {group.characterIds.map((id, i) => {
-              const ch = getCharacter(id)
-              const isPicked = selectedCharacter?.id === ch.id
-              return (
-                <div key={id} className="text-center" style={{ opacity: isPicked ? 1 : 1 - i * 0.12 }}>
-                  <CharacterAvatar
-                    character={ch}
-                    size={74}
-                    priority
-                    dim={!!selectedCharacter && !isPicked}
-                    className="border border-bone/10"
-                  />
-                  <div
-                    className="mt-1 font-mono text-[8px] uppercase tracking-[0.16em]"
-                    style={{ color: ch.accent }}
-                  >
-                    {ch.name.split(' ')[0]}
-                  </div>
-                </div>
-              )
-            })}
-          </motion.div>
+          {/* cast switcher: pinned to the hero's top-right where there is
+            * room for it, and in normal flow above the title when there is not */}
+          <CastSwitcher className="order-first mb-8 self-end lg:absolute lg:right-6 lg:top-20 lg:order-none lg:mb-0 xl:right-12" />
         </div>
       </div>
 
-      {/* roster carousel */}
-      <div className="relative -mt-6 pb-2">
-        <CharacterCarousel />
-      </div>
-
       {/* episode shelf */}
-      <div className="px-6 pb-36 pt-12 sm:px-12 lg:px-20">
+      <div className="px-6 pb-36 pt-6 sm:px-12 lg:px-20">
         <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
           <Eyebrow>
             {group.name} · season one · your training. your choices.

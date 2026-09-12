@@ -76,62 +76,53 @@ ok(has('ONBOARD'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
 ok(has('your training. your choices.'), 'tagline')
 ok(has('THE CLIENT') && has('THE DEADLINE'), 'locked episodes on the shelf')
-ok(has('choose your cast'), 'roster carousel rendered')
-ok(has('Rick and Morty'), 'first character group panel')
-ok(has('RICK SANCHEZ') && has('MORTY SMITH') && has('SUMMER SMITH') && has('JERRY SMITH'), 'group cast cards')
-ok(document.querySelectorAll('[aria-roledescription="carousel"]').length === 1, 'carousel exposes a carousel role')
-ok(document.querySelectorAll('[role="tab"]').length === 4, 'one dot per character group')
-ok(document.querySelectorAll('img[src^="/characters/"]').length > 0, 'character artwork rendered as images')
+ok(has('Rick and Morty'), 'selected roster named in the hero')
+ok(has('RICK') && has('MORTY') && has('SUMMER') && has('JERRY'), 'cast switcher shows the four portraits')
+ok(document.querySelectorAll('img[src^="/characters/"]').length === 4, 'exactly the selected roster is rendered — no big card section')
 ok(document.querySelectorAll('img[src^="/episodes/"]').length > 0, 'episode artwork rendered as images')
 
-console.log('\n=== 1b. ROSTER CAROUSEL ===')
-const track = document.querySelector<HTMLElement>('[aria-roledescription="carousel"] [role="group"]')
-ok(!!track, 'scroll track present')
-ok(track?.className.includes('snap-x') && track?.className.includes('overflow-x-auto'), 'track uses native scroll snapping')
-ok(track?.getAttribute('tabindex') === '0', 'track is focusable for keyboard use')
-const panels = [...document.querySelectorAll<HTMLElement>('[role="tabpanel"]')]
-ok(panels.length === 4, `one panel per group (got ${panels.length})`)
-ok(panels.slice(1).every((p) => p.getAttribute('aria-hidden') === 'true'), 'off-screen panels are hidden from assistive tech')
+console.log('\n=== 1b. CAST SWITCHER ===')
+const switcher = document.querySelector<HTMLElement>('[role="group"][aria-label="Character roster"]')
+ok(!!switcher, 'cast switcher present in the hero')
+ok(!document.querySelector('[aria-roledescription="carousel"]'), 'the big roster card section is gone')
+const portraits = () => [
+  ...(switcher?.querySelectorAll<HTMLElement>('[aria-label="Characters"] button[aria-pressed]') ?? []),
+]
+ok(portraits().length === 4, `four character buttons (got ${portraits().length})`)
 
-// keyboard: ArrowRight should advance the roster and take the shelf with it
+// arrows switch roster, and the episode shelf underneath follows
+const nextRoster = switcher!.querySelector<HTMLElement>('button[aria-label="Next roster"]')
+const prevRoster = switcher!.querySelector<HTMLElement>('button[aria-label="Previous roster"]')
+ok(!!nextRoster && !!prevRoster, 'switcher has both arrows')
+
+await act(async () => { nextRoster!.click(); await sleep(150) })
+await flush(150)
+ok(has('South Park'), 'next arrow switched to South Park')
+ok(has('THE GROUP CHAT'), 'episode shelf followed the roster')
+ok(!has('THE CLIENT'), 'the previous roster’s episodes left the shelf')
+ok(has('CARTMAN') || has('ERIC'), 'switcher shows the new cast')
+
+// keyboard on the switcher
 await act(async () => {
-  track!.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
-  await sleep(120)
+  switcher!.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+  await sleep(150)
 })
 await flush(150)
-ok(has('THE GROUP CHAT'), 'ArrowRight slid to South Park and the episode shelf followed')
-ok(has('South Park · season one'), 'shelf header names the selected group')
-ok(!has('THE CLIENT'), 'the previous group’s episodes left the shelf')
+ok(has('Family Guy') && has('THE CONFIDENT ANSWER'), 'ArrowRight advanced to Family Guy')
 
-// arrow buttons
-const next = document.querySelector<HTMLElement>('button[aria-label="Next roster"]')
-const prev = document.querySelector<HTMLElement>('button[aria-label="Previous roster"]')
-ok(!!next && !!prev, 'carousel arrow controls present')
-await act(async () => { next!.click(); await sleep(100) })
+// wraps around, so two arrows reach every roster
+await act(async () => { nextRoster!.click(); await sleep(120) })
 await flush(120)
-ok(has('THE CONFIDENT ANSWER'), 'next arrow reached Family Guy')
-ok(has('PETER GRIFFIN') && has('STEWIE GRIFFIN'), 'Family Guy cast rendered')
-
-// dots jump straight to a group
-const dots = [...document.querySelectorAll<HTMLElement>('[role="tab"]')]
-await act(async () => { dots[3].click(); await sleep(100) })
+ok(has('The Simpsons') && has('SECTOR 7-G'), 'reached The Simpsons')
+await act(async () => { nextRoster!.click(); await sleep(120) })
 await flush(120)
-ok(has('SECTOR 7-G') && has('HOMER SIMPSON'), 'dot jumped to The Simpsons')
-ok(dots[3].getAttribute('aria-selected') === 'true', 'active dot is marked selected')
-ok(dots[3].getAttribute('aria-controls') === 'roster-panel-the-simpsons', 'dot is wired to its panel')
-ok(dots.filter((d) => d.getAttribute('tabindex') === '0').length === 1, 'tablist uses a roving tabindex')
+ok(has('Rick and Morty') && has('THE CLIENT'), 'wraps back round to Rick and Morty')
 
-// selecting a character marks it and drives the voice layer
-const bart = findByText('BART SIMPSON', 'button')
-ok(!!bart, 'character card is a real button')
-await act(async () => { bart!.click(); await sleep(300) })
+// selecting a character marks it
+const first = portraits()[0]
+await act(async () => { first.click(); await sleep(300) })
 await flush(200)
-ok(bart!.getAttribute('aria-pressed') === 'true', 'selected character is marked pressed')
-
-// back to the playable roster
-await act(async () => { dots[0].click(); await sleep(100) })
-await flush(150)
-ok(has('FIRST') && has('THE CLIENT'), 'returned to Rick and Morty with its shelf')
+ok(first.getAttribute('aria-pressed') === 'true', 'selected character is marked pressed')
 
 console.log('\n=== 2. EPISODE INTRO ===')
 await click('start episode')

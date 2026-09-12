@@ -29,10 +29,11 @@ npm run dev
 
 ## The demo path
 
-1. **Episode lobby** — the roster carousel: swipe or drag horizontally between
-   character groups (Rick and Morty → South Park → Family Guy → The Simpsons).
-   Tap a character to select them and hear their voice; the hero and the episode
-   shelf follow the group you land on.
+1. **Episode lobby** — the featured episode as a full-bleed hero, the cast
+   switcher in its corner, and the episode shelf underneath. The arrows move
+   between rosters (Rick and Morty → South Park → Family Guy → The Simpsons);
+   the hero and the shelf both follow. Clicking a portrait selects that
+   character and previews their voice.
 2. **Featured episode** — `FIRST DAY · Episode 01 · Cybersecurity`
 3. **Episode intro** — cast, concepts, and a note saying which act has already
    been personalised for you
@@ -240,7 +241,7 @@ src/
     voice.ts                proxy / direct / browser / simulated tiers
     useVoiceStatus.ts       React binding for async provider discovery
   components/
-    CharacterCarousel.tsx   the roster carousel (native scroll-snap + drag)
+    CastSwitcher.tsx        compact roster control in the hero corner
     SceneCanvas.tsx         procedural cinematic previs per shot spec
     DialogueOverlay.tsx     ChoicePanel.tsx  RiskTerminal.tsx
     ConsequencePanel.tsx    CharacterChat.tsx  EpisodeProgress.tsx
@@ -257,9 +258,10 @@ public/episodes/*.jpg       1280x720, one per episode
 ## Verification
 
 ```bash
-npm run verify            # both suites
-npm run verify:content    # graph integrity + retrieval + characters + coach
+npm run verify             # all three suites
+npm run verify:content     # graph integrity + retrieval + characters + coach
 npm run verify:walkthrough # headless click-through of two full playthroughs
+npm run verify:visual      # real Chrome: layout, images, carousel at 2 viewports
 npm run typecheck
 ```
 
@@ -279,10 +281,32 @@ taking the strong branch through all four acts, once the failing branch —
 clicking dialogue, wagering, deciding, asking the characters three questions
 (including one the knowledge base cannot answer), opening the retrieval
 inspector, switching to voice mode, and reading the results. It asserts the two
-runs get *different* adaptive act threes. It also drives the roster carousel —
-arrow keys, arrow buttons and dots — and asserts the hero and episode shelf
-follow the group, that off-screen panels are hidden from assistive tech, and
-that selecting a character marks it pressed.
+runs get *different* adaptive act threes. It also drives the cast switcher —
+arrow buttons and arrow keys, through all four rosters and back round — and
+asserts the hero and episode shelf follow the roster, and that selecting a
+character marks it pressed.
+
+`verify:visual` drives **real Chrome** over the DevTools protocol and asserts
+the class of bug jsdom structurally cannot see — it has no layout engine and
+never loads an image. Every assertion in it exists because it caught a real
+regression: an `h-full` child collapsing inside a `min-h` parent; a `<button>`
+inheriting `align-items: flex-start` from the UA stylesheet so its `flex-col`
+children shrink-wrap to max-content and clip at 390px; and a cached image
+firing `load` before React attaches `onLoad`, leaving an opacity fade-in stuck
+at zero. It also checks horizontal overflow, that the absolutely-positioned
+cast switcher stays inside the viewport, that the shelf follows the roster, and
+that the console and network stay clean. It runs at 1440x900 and 390x844,
+starts Vite and the voice proxy the way `npm run dev` does, and writes
+screenshots to `scripts/.out/shots/`.
+
+It uses `puppeteer-core`, so there is no bundled browser download: it finds the
+Chrome or Chromium already installed, or `$PUPPETEER_EXECUTABLE_PATH`.
+
+> **Note on Claude in Chrome:** the extension cannot drive Arc. Arc replaced
+> Chromium's tab strip with its own model, and the extension's automation is
+> built on Chrome tab groups — creating one never returns, so every page-acting
+> tool times out. Install Google Chrome and run the extension there.
+> `npm run verify:visual` is browser-agnostic and needs no extension.
 
 ## Stack
 

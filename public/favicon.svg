@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- ONBOARD mark: the signal-amber play triangle on ink. -->
+  <rect width="32" height="32" fill="#050607"/>
+  <rect x="2" y="2" width="28" height="28" fill="none" stroke="#F5A524" stroke-opacity=".35"/>
+  <path d="M12 9.5 23 16 12 22.5z" fill="#F5A524"/>
+</svg>
