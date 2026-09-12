@@ -44,6 +44,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => setMenuOpen(false), [state.view])
 
+  /* Condense the header fade once the screen scrolls. Each screen owns its own
+   * overflow-y-auto container, so there is no window scroll to read: listen on
+   * <main> in the CAPTURE phase, which is the one way to catch a scroll event
+   * from a descendant (scroll does not bubble). */
+  const [scrolled, setScrolled] = useState(false)
+  const mainRef = useRef<HTMLElement>(null)
+
+  useEffect(() => setScrolled(false), [state.view])
+
+  useEffect(() => {
+    const el = mainRef.current
+    if (!el) return
+    const onScroll = (e: Event) => setScrolled(((e.target as HTMLElement)?.scrollTop ?? 0) > 32)
+    el.addEventListener('scroll', onScroll, true)
+    return () => el.removeEventListener('scroll', onScroll, true)
+  }, [])
+
   useEffect(() => {
     if (!menuOpen) return
     const onPointer = (e: MouseEvent) => {
@@ -68,7 +85,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             key="chrome-header"
             {...FADE}
             transition={CHROME_FADE}
-            className="pointer-events-none absolute inset-x-0 top-0 z-30 scrim-top flex items-center gap-3 px-6 pb-28 pt-5 sm:gap-6 sm:px-10 [&>*]:pointer-events-auto"
+            className={`pointer-events-none absolute inset-x-0 top-0 z-30 scrim-top flex items-center gap-3 px-6 pt-5 transition-[padding-bottom] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] sm:gap-6 sm:px-10 [&>*]:pointer-events-auto ${
+              scrolled ? 'pb-8' : 'pb-28'
+            }`}
           >
             <button className="shrink-0" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
               <span className="font-sans text-[19px] font-semibold tracking-[-0.015em] text-bone">DayOne</span>
@@ -152,7 +171,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </AnimatePresence>
 
-      <main className="h-full w-full">{children}</main>
+      <main ref={mainRef} className="h-full w-full">
+        {children}
+      </main>
 
       <FilmOverlay intensity={cinematic ? 0.12 : 0.07} />
     </div>

@@ -45,7 +45,7 @@ export function Home() {
   return (
     <div className="relative h-full overflow-y-auto">
       {/* hero */}
-      <div className="relative min-h-[58vh] w-full overflow-hidden">
+      <div className="relative min-h-[64vh] w-full overflow-hidden">
         {featured ? (
           <EpisodeStill episode={featured} sceneKey={`home-hero-${featured.id}`} priority />
         ) : (
@@ -54,7 +54,7 @@ export function Home() {
         <div className="scrim-left absolute inset-0" />
         <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-ink-900 to-transparent" />
 
-        <div className="relative flex min-h-[58vh] flex-col justify-center px-6 py-16 sm:px-12 lg:px-20">
+        <div className="relative flex min-h-[64vh] flex-col justify-center px-6 pb-16 pt-36 sm:px-12 lg:px-20">
           <motion.div
             key={group.id}
             initial={{ opacity: 0, y: 24 }}
@@ -111,7 +111,7 @@ export function Home() {
 
           {/* cast switcher: pinned to the hero's top-right where there is
             * room for it, and in normal flow above the title when there is not */}
-          <CastSwitcher className="order-first mb-8 self-end lg:absolute lg:right-6 lg:top-20 lg:order-none lg:mb-0 xl:right-12" />
+          <CastSwitcher className="order-first mb-8 self-end lg:absolute lg:right-6 lg:top-28 lg:order-none lg:mb-0 xl:right-12" />
         </div>
       </div>
 
