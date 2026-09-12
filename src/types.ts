@@ -253,6 +253,43 @@ export interface PlayerState {
   decisions: DecisionRecord[]
   completedEpisodes: string[]
   transcript: ChatTurn[]
+  cosmetics: Cosmetics
+}
+
+/* ---------------------------------------------------------------- cosmetics */
+
+/** Profile decoration only. Nothing here is read by the engine or the scoring. */
+export type CosmeticType = 'border' | 'title' | 'badge' | 'character'
+
+export interface ShopItem {
+  id: string
+  name: string
+  type: CosmeticType
+  price: number
+  description: string
+  /** Character art. Absent means the card renders a labelled placeholder. */
+  image?: string
+  /** Which show a character belongs to — a CharacterGroup id. */
+  show?: string
+  featured?: boolean
+  isNew?: boolean
+}
+
+/** Awarded by play, never sold. */
+export interface EarnedBadge {
+  id: string
+  name: string
+  description: string
+}
+
+export interface Cosmetics {
+  ownedItems: string[]
+  earnedBadges: string[]
+  equippedBorder: string | null
+  equippedTitle: string | null
+  /** Shown next to the name on Profile, in the order they were equipped. */
+  equippedBadges: string[]
+  showcaseCharacter: string | null
 }
 
 export interface ChatTurn {

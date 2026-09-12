@@ -175,7 +175,7 @@ export function ConsequencePanel({
               )
             })}
             <Btn onClick={onContinue} className="ml-auto">
-              continue <ArrowRight size={13} />
+              Continue <ArrowRight size={13} />
             </Btn>
           </div>
         </motion.div>

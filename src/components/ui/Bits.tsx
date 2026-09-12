@@ -1,5 +1,4 @@
 import { motion } from 'framer-motion'
-import { Star } from 'lucide-react'
 import type { CSSProperties, ReactNode } from 'react'
 
 export const Eyebrow = ({
@@ -34,7 +33,7 @@ export function Chip({
   }
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.16em] ${tones[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.07em] ${tones[tone]} ${className}`}
     >
       {children}
     </span>
@@ -48,6 +47,7 @@ export function Btn({
   className = '',
   disabled,
   type = 'button',
+  size = 'md',
 }: {
   children: ReactNode
   onClick?: () => void
@@ -55,14 +55,15 @@ export function Btn({
   className?: string
   disabled?: boolean
   type?: 'button' | 'submit'
+  size?: 'md' | 'sm'
 }) {
-  const base =
-    'group relative inline-flex items-center justify-center gap-2.5 px-6 py-3 font-mono text-[11px] uppercase tracking-[0.2em] transition-all duration-300 disabled:opacity-35 disabled:pointer-events-none'
+  const sizes = { md: 'px-6 py-3 text-[13.5px]', sm: 'px-4 py-2 text-[13px]' }
+  const base = `group relative inline-flex items-center justify-center gap-2 font-sans font-medium transition-colors duration-200 disabled:opacity-35 disabled:pointer-events-none ${sizes[size]}`
   const variants = {
-    primary: 'bg-signal text-ink-900 hover:bg-signal-hot hover:shadow-[0_0_40px_-8px_rgba(245,165,36,.6)]',
-    outline: 'border border-bone/20 text-bone hover:border-signal/60 hover:text-signal',
+    primary: 'bg-signal text-ink-900 hover:bg-signal-hot',
+    outline: 'border border-bone/15 text-bone-dim hover:border-bone/35 hover:text-bone',
     ghost: 'text-bone-dim hover:text-bone',
-    danger: 'border border-danger/40 text-danger hover:bg-danger/10',
+    danger: 'border border-danger/35 text-danger hover:bg-danger/10',
   }
   return (
     <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>
@@ -112,20 +113,6 @@ export function Meter({
     </div>
   )
 }
-
-export const Stars = ({ n, size = 13 }: { n: number; size?: number }) => (
-  <span className="inline-flex items-center gap-0.5">
-    {[1, 2, 3, 4, 5].map((i) => (
-      <Star
-        key={i}
-        size={size}
-        className={i <= n ? 'text-signal' : 'text-bone/20'}
-        fill={i <= n ? 'currentColor' : 'none'}
-        strokeWidth={1.6}
-      />
-    ))}
-  </span>
-)
 
 /** Section divider with a label sitting on the line. */
 export const Rule = ({ label }: { label?: string }) => (

@@ -189,10 +189,10 @@ export function Results() {
 
         <div className="mt-8 flex flex-wrap items-center gap-3">
           <Btn onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
-            next episode <ArrowRight size={13} />
+            Next episode <ArrowRight size={13} />
           </Btn>
           <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'profile' })}>
-            <User size={13} /> employee profile
+            <User size={13} /> Employee profile
           </Btn>
         </div>
       </div>

@@ -16,6 +16,7 @@ import type {
   WagerResult,
 } from '@/types'
 import { adaptationRationale, applyDecision, baselineMastery, episodeScore, levelFromXp, weakestConcept } from './adaptive'
+import { awardForDecision, awardForEpisode, equip, freshCosmetics, purchase, unequip } from './cosmetics'
 import { resolveWager, type WagerOption } from './risk'
 
 /* ============================================================================
@@ -28,7 +29,7 @@ import { resolveWager, type WagerOption } from './risk'
  * coaching, and authoring.
  * ========================================================================== */
 
-export type View = 'home' | 'intro' | 'scene' | 'profile' | 'authoring' | 'results'
+export type View = 'home' | 'intro' | 'scene' | 'profile' | 'shop' | 'authoring' | 'results'
 export type Phase = 'dialogue' | 'wager' | 'choices' | 'outcome' | 'ending'
 
 export interface Adaptation {
@@ -78,12 +79,18 @@ function loadPlayer(): PlayerState {
     decisions: [],
     completedEpisodes: [],
     transcript: [],
+    cosmetics: freshCosmetics(),
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return fresh
     const parsed = JSON.parse(raw) as PlayerState
-    return { ...fresh, ...parsed, mastery: { ...fresh.mastery, ...parsed.mastery } }
+    return {
+      ...fresh,
+      ...parsed,
+      mastery: { ...fresh.mastery, ...parsed.mastery },
+      cosmetics: { ...fresh.cosmetics, ...parsed.cosmetics },
+    }
   } catch {
     return fresh
   }
@@ -135,6 +142,9 @@ type Action =
   | { type: 'CLOSE_CHAT' }
   | { type: 'CHAT_TURN'; turn: ChatTurn }
   | { type: 'RESET_PROGRESS' }
+  | { type: 'BUY_ITEM'; itemId: string }
+  | { type: 'EQUIP_ITEM'; itemId: string }
+  | { type: 'UNEQUIP_ITEM'; itemId: string }
 
 /** Enter a scene, resolving adaptive variant slots deterministically. */
 function enterScene(state: GameState, ep: Episode, sceneId: string): GameState {
@@ -170,13 +180,14 @@ function finishEpisode(state: GameState, ep: Episode): GameState {
   const score = episodeScore(state.decisionsThisEpisode)
   const best = state.decisionsThisEpisode.filter((d) => d.quality === 'best').length
   const xp = Math.round(score * 3.1) + best * 45
-  const player: PlayerState = {
+  const progressed: PlayerState = {
     ...state.player,
     xp: state.player.xp + xp,
     level: levelFromXp(state.player.xp + xp),
     completedEpisodes: [...new Set([...state.player.completedEpisodes, ep.id])],
     decisions: [...state.player.decisions, ...state.decisionsThisEpisode],
   }
+  const player = awardForEpisode(progressed, state.decisionsThisEpisode)
   savePlayer(player)
   return { ...state, view: 'results', player, finalScore: score }
 }
@@ -292,11 +303,10 @@ function reducer(state: GameState, action: Action): GameState {
         msToDecide: ms,
       }
 
-      const player: PlayerState = {
-        ...state.player,
-        credits,
-        mastery: applyDecision(state.player.mastery, choice),
-      }
+      const player = awardForDecision(
+        { ...state.player, credits, mastery: applyDecision(state.player.mastery, choice) },
+        record,
+      )
       savePlayer(player)
 
       const mid: GameState = {
@@ -340,6 +350,16 @@ function reducer(state: GameState, action: Action): GameState {
         /* ignore */
       }
       return initialState()
+    }
+
+    case 'BUY_ITEM':
+    case 'EQUIP_ITEM':
+    case 'UNEQUIP_ITEM': {
+      const move = action.type === 'BUY_ITEM' ? purchase : action.type === 'EQUIP_ITEM' ? equip : unequip
+      const player = move(state.player, action.itemId)
+      if (player === state.player) return state
+      savePlayer(player)
+      return { ...state, player }
     }
 
     default:

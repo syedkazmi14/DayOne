@@ -20,7 +20,7 @@ export function FilmOverlay({ intensity = 0.16 }: { intensity?: number }) {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(120% 90% at 50% 45%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.42) 78%, rgba(0,0,0,0.78) 100%)',
+            'radial-gradient(130% 100% at 50% 45%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.26) 80%, rgba(0,0,0,0.54) 100%)',
         }}
       />
     </div>

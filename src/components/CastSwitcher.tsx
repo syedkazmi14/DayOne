@@ -21,6 +21,13 @@ import { CharacterAvatar } from './ui/CharacterAvatar'
 
 const PORTRAIT = 62
 
+/** Cast names are authored in caps for the cinematic speaker labels; the
+ *  picker wants them as names. */
+const firstName = (name: string) => {
+  const w = name.split(' ')[0]
+  return w.charAt(0) + w.slice(1).toLowerCase()
+}
+
 export function CastSwitcher({ className = '' }: { className?: string }) {
   const { state, dispatch, group } = useGame()
   const index = groupIndex(group.id)
@@ -102,41 +109,37 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
         e.preventDefault()
         go(delta)
       }}
-      /* glass backing: the hero still behind this can be any brightness, and
-       * 8px mono labels over show artwork are otherwise unreadable. */
-      className={`glass w-fit p-2.5 ${className}`}
+      /* dark scrim: the hero still behind this can be any brightness, and the
+       * portrait labels over show artwork are otherwise unreadable. */
+      className={`w-fit border border-bone/10 bg-ink-900/70 p-3 backdrop-blur-md ${className}`}
     >
       {/* group name + switcher */}
-      <div className="mb-2 flex items-center justify-end gap-1.5">
+      <div className="mb-2.5 flex items-center gap-1">
+        <span aria-live="polite" className="mr-auto font-sans text-[13px] font-medium" style={{ color: group.accent }}>
+          {group.name}
+        </span>
+
         <button
           onClick={toggleMute}
           aria-pressed={previewOn}
           title={previewOn ? 'Voice previews on' : 'Voice previews off'}
-          className={`mr-auto p-1 transition-colors ${previewOn ? 'text-signal' : 'text-bone-faint hover:text-bone'}`}
+          className={`p-1 transition-colors ${previewOn ? 'text-bone-dim hover:text-bone' : 'text-bone-faint hover:text-bone'}`}
         >
-          {previewOn ? <Volume2 size={12} /> : <VolumeX size={12} />}
+          {previewOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
         </button>
-
         <button
           onClick={() => go(-1)}
           aria-label="Previous roster"
-          className="p-1 text-bone-dim transition-colors hover:text-signal"
+          className="p-1 text-bone-dim transition-colors hover:text-bone"
         >
-          <ChevronLeft size={14} />
+          <ChevronLeft size={15} />
         </button>
-        <span
-          aria-live="polite"
-          className="text-center font-mono text-[9px] uppercase tracking-[0.14em]"
-          style={{ color: group.accent }}
-        >
-          {group.name}
-        </span>
         <button
           onClick={() => go(1)}
           aria-label="Next roster"
-          className="p-1 text-bone-dim transition-colors hover:text-signal"
+          className="p-1 text-bone-dim transition-colors hover:text-bone"
         >
-          <ChevronRight size={14} />
+          <ChevronRight size={15} />
         </button>
       </div>
 
@@ -156,10 +159,14 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
               className="group/card text-center"
             >
               <span
-                className={`relative block overflow-hidden border transition-colors ${
-                  selected ? 'border-signal' : 'border-bone/12 group-hover/card:border-bone/40'
+                className={`relative block overflow-hidden transition-opacity duration-300 ${
+                  selected ? 'opacity-100' : 'opacity-75 group-hover/card:opacity-95'
                 }`}
-                style={{ width: PORTRAIT, height: PORTRAIT }}
+                style={{
+                  width: PORTRAIT,
+                  height: PORTRAIT,
+                  boxShadow: selected ? `inset 0 -2px 0 ${group.accent}` : undefined,
+                }}
               >
                 <CharacterAvatar
                   character={ch}
@@ -179,12 +186,11 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
                 )}
               </span>
               <span
-                className={`mt-1 block font-mono text-[8px] uppercase tracking-[0.14em] ${
-                  selected ? '' : 'text-bone-dim'
+                className={`mt-1.5 block font-sans text-[11.5px] ${
+                  selected ? 'font-medium text-bone' : 'text-bone-faint'
                 }`}
-                style={selected ? { color: ch.accent } : undefined}
               >
-                {ch.name.split(' ')[0]}
+                {firstName(ch.name)}
               </span>
             </button>
           )
@@ -192,9 +198,7 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
       </div>
 
       {voiceNote && (
-        <p className="mt-1.5 max-w-[15rem] text-right font-mono text-[8px] uppercase leading-relaxed tracking-[0.12em] text-danger">
-          {voiceNote}
-        </p>
+        <p className="mt-2 max-w-[15rem] font-sans text-[11.5px] leading-snug text-danger">{voiceNote}</p>
       )}
     </div>
   )

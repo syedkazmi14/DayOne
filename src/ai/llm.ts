@@ -8,8 +8,10 @@
  * real request goes out, or `isLive()` returns false and callers fall back to
  * the local grounded composer — which the UI labels honestly.
  *
- * To go live:
+ * To go live with Anthropic:
  *   echo 'VITE_ANTHROPIC_API_KEY=sk-ant-...' >> .env.local
+ * Or with OpenAI:
+ *   echo 'VITE_OPENAI_API_KEY=sk-...' >> .env.local
  * (Browser-side keys are fine for a demo, never for production — in production
  * this same function points at your own server route.)
  * ========================================================================== */
@@ -26,23 +28,34 @@ export interface LLMRequest {
   temperature?: number
 }
 
-export type LLMMode = 'anthropic' | 'proxy' | 'offline'
+export type LLMMode = 'anthropic' | 'openai' | 'proxy' | 'offline'
 
 const env = (import.meta.env ?? {}) as Record<string, string | undefined>
 
 const ANTHROPIC_KEY = env.VITE_ANTHROPIC_API_KEY
+const OPENAI_KEY = env.VITE_OPENAI_API_KEY
 const PROXY_URL = env.VITE_LLM_PROXY_URL
-const MODEL = env.VITE_LLM_MODEL ?? 'claude-sonnet-5'
+const MODEL_OVERRIDE = env.VITE_LLM_MODEL
 
+const DEFAULT_MODEL: Record<'anthropic' | 'openai', string> = {
+  anthropic: 'claude-sonnet-5',
+  openai: 'gpt-4.1-nano',
+}
+
+/** Anthropic wins if both keys are set, since it's this project's default provider. */
 export const llmMode = (): LLMMode =>
-  ANTHROPIC_KEY ? 'anthropic' : PROXY_URL ? 'proxy' : 'offline'
+  ANTHROPIC_KEY ? 'anthropic' : OPENAI_KEY ? 'openai' : PROXY_URL ? 'proxy' : 'offline'
 
 export const isLive = () => llmMode() !== 'offline'
 
+const modelFor = (mode: 'anthropic' | 'openai'): string => MODEL_OVERRIDE ?? DEFAULT_MODEL[mode]
+
 export const llmLabel = (): string => {
-  switch (llmMode()) {
+  const mode = llmMode()
+  switch (mode) {
     case 'anthropic':
-      return `LIVE · ${MODEL}`
+    case 'openai':
+      return `LIVE · ${modelFor(mode)}`
     case 'proxy':
       return 'LIVE · PROXY'
     default:
@@ -57,22 +70,40 @@ export async function complete(req: LLMRequest): Promise<string> {
   const mode = llmMode()
   if (mode === 'offline') throw new LLMUnavailable('No LLM configured')
 
-  const body = {
-    model: MODEL,
-    max_tokens: req.maxTokens ?? 400,
-    temperature: req.temperature ?? 0.6,
-    system: req.system,
-    messages: req.messages,
-  }
+  const url =
+    mode === 'anthropic'
+      ? 'https://api.anthropic.com/v1/messages'
+      : mode === 'openai'
+        ? 'https://api.openai.com/v1/chat/completions'
+        : PROXY_URL!
 
-  const url = mode === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : PROXY_URL!
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (mode === 'anthropic') {
     headers['x-api-key'] = ANTHROPIC_KEY!
     headers['anthropic-version'] = '2023-06-01'
     // Required for direct browser calls; a server route would not need it.
     headers['anthropic-dangerous-direct-browser-access'] = 'true'
+  } else if (mode === 'openai') {
+    headers['authorization'] = `Bearer ${OPENAI_KEY}`
   }
+
+  // OpenAI's chat completions API carries the system prompt as a message,
+  // not a top-level field; Anthropic (and the proxy, which mirrors it) does the opposite.
+  const body =
+    mode === 'openai'
+      ? {
+          model: modelFor('openai'),
+          max_tokens: req.maxTokens ?? 400,
+          temperature: req.temperature ?? 0.6,
+          messages: [{ role: 'system', content: req.system }, ...req.messages],
+        }
+      : {
+          model: modelFor('anthropic'),
+          max_tokens: req.maxTokens ?? 400,
+          temperature: req.temperature ?? 0.6,
+          system: req.system,
+          messages: req.messages,
+        }
 
   let res: Response
   try {
@@ -82,8 +113,15 @@ export async function complete(req: LLMRequest): Promise<string> {
   }
   if (!res.ok) throw new LLMUnavailable(`${res.status} ${await res.text().catch(() => '')}`)
 
-  const json = (await res.json()) as { content?: { type: string; text?: string }[]; text?: string }
-  const text = json.content?.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('') ?? json.text
+  const json = (await res.json()) as {
+    content?: { type: string; text?: string }[]
+    text?: string
+    choices?: { message?: { content?: string } }[]
+  }
+  const text =
+    mode === 'openai'
+      ? json.choices?.[0]?.message?.content
+      : (json.content?.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('') ?? json.text)
   if (!text) throw new LLMUnavailable('Empty completion')
   return text.trim()
 }

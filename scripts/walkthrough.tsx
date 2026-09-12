@@ -18,6 +18,7 @@ g.Event = dom.window.Event
 g.MouseEvent = dom.window.MouseEvent
 g.KeyboardEvent = dom.window.KeyboardEvent
 g.getComputedStyle = dom.window.getComputedStyle
+g.localStorage = dom.window.localStorage
 g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16) as unknown as number
 g.cancelAnimationFrame = (id: number) => clearTimeout(id)
 g.IS_REACT_ACT_ENVIRONMENT = true
@@ -72,9 +73,8 @@ await act(async () => { root.render(React.createElement(App)) })
 await flush(200)
 
 console.log('\n=== 1. HOME / EPISODE SELECT ===')
-ok(has('ONBOARD'), 'wordmark renders')
+ok(has('DayOne'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
-ok(has('your training. your choices.'), 'tagline')
 ok(has('THE CLIENT') && has('THE DEADLINE'), 'locked episodes on the shelf')
 ok(has('Rick and Morty'), 'selected roster named in the hero')
 ok(has('RICK') && has('MORTY') && has('SUMMER') && has('JERRY'), 'cast switcher shows the four portraits')
@@ -299,20 +299,20 @@ console.log('    score shown: ' + (scoreEl ?? '?').trim())
 console.log('\n=== 11. PROFILE + STUDIO ===')
 await click('employee profile')
 await flush(300)
-ok(has('your employee profile'), 'profile screen')
-ok(has('overall knowledge'), 'overall knowledge')
-ok(has('next scenario target'), 'stats are wired to future scenarios')
-ok(has('decision history'), 'decision history recorded')
+ok(has('knowledge areas'), 'profile screen')
+ok(has('xp to level'), 'level progression shown')
+ok(has('up next'), 'stats are wired to future scenarios')
+ok(has('recent decisions'), 'decision history recorded')
 ok(has('questions you asked'), 'chat transcript recorded')
 await click('episodes')
 await flush(200)
 await click('studio')
 await flush(300)
-ok(has('BORING MATERIAL'), 'studio screen')
+ok(has('create an episode'), 'studio screen')
 ok(has('Helix Security Handbook'), 'source documents listed')
-ok(has('KNOWLEDGE AGENT') && has('SCENARIO GENERATOR'), 'pipeline diagram')
-ok(has('run knowledge agent'), 'pipeline can be run')
-ok(has('video generation'), 'video authoring boundary documented')
+ok(has('source material') && has('episode setup'), 'authoring workflow sections')
+ok(!!findByText('generate episode'), 'episode generation can be run')
+ok(has('advanced') && has('authoring stub'), 'technical detail kept behind advanced')
 
 console.log('\n=== 12. SECOND RUN: THE FAILURE BRANCHES ===')
 await click('profile')                // reset lives on the profile screen
@@ -385,6 +385,106 @@ ok(badCoach, 'coach reads the bad run differently')
 const m = body().match(/final score(\d{1,3})/i)
 console.log('    score shown: ' + (m ? m[1] : '?'))
 ok(!!m && Number(m[1]) < 35, 'bad run scores low')
+
+console.log('\n=== 13. SHOP ===')
+const card = (name: string) =>
+  [...document.querySelectorAll<HTMLElement>('article')].find((a) => a.querySelector('h3')?.textContent === name) ?? null
+const cardText = (name: string) => card(name)?.textContent ?? ''
+const cardButton = (name: string, label: string) =>
+  [...(card(name)?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null
+async function press(el: HTMLElement | null, label: string) {
+  if (!el) { fails++; console.log(`  ✗ could not find "${label}"`); return }
+  await act(async () => { el.click(); await sleep(80) })
+  await flush(120)
+}
+const dialogButton = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === label) ?? null
+const saved = () => JSON.parse(localStorage.getItem('onboard.player.v1') ?? '{}')
+
+await click('employee profile')
+await flush(300)
+await click('shop')
+await flush(300)
+ok(has('Spend your credits on profile cosmetics and collectibles.'), 'shop screen')
+ok(has('Featured') && has('New this week'), 'featured and new sections')
+ok(!/\b(rare|legendary|epic|left in stock)\b/i.test(body()), 'no rarity or scarcity copy')
+
+// the bad run above still finished an episode, which earns a badge
+await click('badges')
+await flush(200)
+ok(cardText('First Week').includes('Earned'), 'finishing an episode earned First Week')
+ok(cardText('Perfect Episode').includes('Not for sale'), 'unearned badges are not purchasable')
+ok(!cardButton('Perfect Episode', 'Buy'), 'no buy button on earned badges')
+await press(cardButton('First Week', 'Equip'), 'equip First Week')
+ok(cardText('First Week').includes('Equipped'), 'earned badge equipped')
+await click('profile')
+await flush(300)
+ok(has('First Week') && has('Customize profile'), 'profile shows the badge and the customize link')
+
+await click('reset progression')
+await flush(300)
+await click('shop')
+await flush(300)
+ok(has('1,240 credits'), 'balance shown by the heading')
+
+await press(cardButton('Portal Frame', 'Buy'), 'buy Portal Frame')
+ok(has('Buy Portal Frame?') && has('You will have 790 credits remaining.'), 'confirmation names price and remainder')
+await press(dialogButton('Buy'), 'confirm buy')
+await flush(200)
+ok(!document.querySelector('[role="dialog"]'), 'dialog closed after purchase')
+ok(has('Purchased Portal Frame'), 'subtle purchase confirmation')
+ok(has('790 credits'), 'credits deducted')
+ok(cardText('Portal Frame').includes('Owned') && !cardButton('Portal Frame', 'Buy'), 'owned, cannot be bought twice')
+await press(cardButton('Portal Frame', 'Equip'), 'equip Portal Frame')
+ok(cardText('Portal Frame').includes('Equipped') && !!cardButton('Portal Frame', 'Unequip'), 'border equipped')
+
+await press(cardButton('Mr. Poopybutthole', 'Buy'), 'buy Mr. Poopybutthole')
+await press(dialogButton('Buy'), 'confirm buy')
+await press(cardButton('Mr. Poopybutthole', 'Showcase'), 'showcase Mr. Poopybutthole')
+ok(cardText('Mr. Poopybutthole').includes('Showcased'), 'character showcased')
+
+await click('titles')
+await flush(200)
+await press(cardButton('First Day Survivor', 'Buy'), 'buy First Day Survivor')
+await press(dialogButton('Buy'), 'confirm buy')
+await press(cardButton('First Day Survivor', 'Equip'), 'equip title')
+ok(has('40 credits'), 'three purchases deducted (1240 − 450 − 600 − 150)')
+ok(cardButton('Risk Taker', 'Buy')?.disabled === true && cardText('Risk Taker').includes('160 short'), 'unaffordable item is disabled and says why')
+
+await click('owned')
+await flush(150)
+ok(!!card('First Day Survivor') && !card('Risk Taker'), 'owned filter')
+await click('not owned')
+await flush(150)
+ok(!card('First Day Survivor') && !!card('Risk Taker'), 'not-owned filter')
+
+const s = saved()
+ok(s.credits === 40, 'credits persisted')
+ok(['portal-frame', 'mr-poopybutthole', 'first-day-survivor'].every((id) => s.cosmetics?.ownedItems?.includes(id)), 'purchases persisted')
+ok(s.cosmetics?.equippedBorder === 'portal-frame' && s.cosmetics?.equippedTitle === 'first-day-survivor' && s.cosmetics?.showcaseCharacter === 'mr-poopybutthole', 'equipped state persisted')
+
+await click('profile')
+await flush(300)
+ok(has('First Day Survivor'), 'profile shows equipped title')
+ok(has('Showcase') && has('Mr. Poopybutthole') && has('Placeholder art'), 'profile shows showcase with labelled placeholder art')
+ok(!!document.querySelector('svg circle[stroke="#97CE4C"]'), 'profile avatar wears the border')
+
+console.log('\n=== 14. COSMETICS RULES ===')
+const cos = await import('../src/engine/cosmetics')
+const base = { ...s, credits: 1000, cosmetics: cos.freshCosmetics() }
+const bought = cos.purchase(base, 'risk-taker')
+ok(bought.credits === 800 && bought.cosmetics.ownedItems.includes('risk-taker'), 'purchase deducts and grants')
+ok(cos.purchase(bought, 'risk-taker') === bought, 'same item cannot be bought twice')
+ok(cos.purchase({ ...base, credits: 100 }, 'risk-taker').credits === 100, 'cannot buy without enough credits')
+ok(cos.purchase(base, 'first-week') === base, 'earned badges are not for sale')
+ok(cos.equip(base, 'risk-taker') === base, 'cannot equip what you do not own')
+const twoTitles = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['risk-taker', 'policy-breaker'] } }
+const swapped = cos.equip(cos.equip(twoTitles, 'risk-taker'), 'policy-breaker')
+ok(swapped.cosmetics.equippedTitle === 'policy-breaker', 'equipping a title replaces the previous one')
+const badges = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['portal-badge', 'plumbus-badge', 'chicken-badge', 'certified-menace'] } }
+const worn = badges.cosmetics.ownedItems.reduce((pl: typeof base, id: string) => cos.equip(pl, id), badges)
+ok(worn.cosmetics.equippedBadges.length === cos.MAX_EQUIPPED_BADGES, 'badge slots are capped')
+ok(cos.unequip(worn, 'portal-badge').cosmetics.equippedBadges.length === 2, 'unequip frees a badge slot')
 
 console.log('\n' + (fails === 0 ? '✅ WALKTHROUGH PASSED' : `❌ ${fails} STEP(S) FAILED`))
 process.exit(fails === 0 ? 0 : 1)

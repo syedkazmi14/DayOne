@@ -27,7 +27,7 @@ export default {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
-      letterSpacing: { ultra: '0.32em', mega: '0.5em' },
+      letterSpacing: { ultra: '0.15em', mega: '0.24em' },
       keyframes: {
         grain: {
           '0%,100%': { transform: 'translate(0,0)' },

@@ -205,7 +205,7 @@ export function ScenePlayer() {
                 </button>
               )}
               <Btn className="mt-10" onClick={() => dispatch({ type: 'CONTINUE' })}>
-                see your results <ArrowRight size={13} />
+                See your results <ArrowRight size={13} />
               </Btn>
             </motion.div>
           )}

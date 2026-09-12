@@ -50,10 +50,14 @@
     @apply font-sans font-black uppercase leading-[0.86] tracking-[-0.02em];
   }
   .t-eyebrow {
-    @apply font-mono text-[10px] uppercase tracking-ultra text-bone-faint;
+    @apply font-mono text-[10px] uppercase tracking-[0.13em] text-bone-faint;
   }
   .t-label {
-    @apply font-mono text-[11px] uppercase tracking-[0.18em];
+    @apply font-mono text-[11px] uppercase tracking-[0.08em];
+  }
+  /* Section heading for the browsing surfaces — sentence case, sans, quiet. */
+  .t-section {
+    @apply font-sans text-[19px] font-semibold tracking-[-0.01em] text-bone;
   }
 
   /* Glass panel — subtle, single hairline, no candy gradients. */

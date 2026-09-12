@@ -6,6 +6,7 @@ import { Home } from './components/screens/Home'
 import { PlayerProfile } from './components/screens/PlayerProfile'
 import { Results } from './components/screens/Results'
 import { ScenePlayer } from './components/screens/ScenePlayer'
+import { Shop } from './components/screens/Shop'
 import { GameProvider, useGame } from './engine/gameStore'
 
 const SCREENS = {
@@ -13,6 +14,7 @@ const SCREENS = {
   intro: EpisodeIntro,
   scene: ScenePlayer,
   profile: PlayerProfile,
+  shop: Shop,
   authoring: Authoring,
   results: Results,
 } as const
