@@ -173,8 +173,21 @@ const saveGroupId = (id: string) => {
  * show get the picker first; admins go straight to the Studio, because the
  * show scopes the lobby and they are not headed there.
  */
+/**
+ * Where a RELOAD lands. Someone refreshing mid-session should come back where
+ * they were, so a show they have already chosen skips the picker here.
+ */
 const landingFor = (role: SessionRole, groupId: string | null): View =>
   role === 'admin' ? 'authoring' : groupId ? 'home' : 'pickshow'
+
+/**
+ * Where the SIGN-IN BUTTON lands, which is a different question. There is no
+ * real auth, so every press of it is a new person sitting down — and asking a
+ * new person which show they want is the whole point of the picker. The stored
+ * id survives as their default, not as a reason to skip the question.
+ */
+const landingAfterSignIn = (role: SessionRole): View =>
+  role === 'admin' ? 'authoring' : 'pickshow'
 
 function loadPlayer(): PlayerState {
   const fresh: PlayerState = {
@@ -341,14 +354,15 @@ export function reducer(state: GameState, action: Action): GameState {
     case 'SIGN_IN': {
       const session: Session = { role: action.role, provider: action.provider, signedInAt: Date.now() }
       saveSession(session)
-      return { ...state, session, view: landingFor(action.role, state.groupId) }
+      return { ...state, session, view: landingAfterSignIn(action.role) }
     }
 
     case 'SIGN_OUT': {
       clearSession()
       /* Progression, published content and the chosen show all survive — this
-       * is a role switch, not a wipe, and signing back in should not ask for a
-       * show again. RESET_PROGRESS is the destructive one. */
+       * is a role switch, not a wipe. The show is kept as the default the
+       * picker opens on; signing back in still asks. RESET_PROGRESS is the
+       * destructive one. */
       return { ...state, session: null, view: 'signin' }
     }
 

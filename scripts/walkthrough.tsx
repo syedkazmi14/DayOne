@@ -120,7 +120,20 @@ ok(
 await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(150) })
 await flush(150)
 ok(!has('Pick your show'), 'choosing a show leaves the picker')
-ok(localStorage.getItem('onboard.group.v1') === 'rick-and-morty', 'the choice is persisted, so it is asked once')
+ok(localStorage.getItem('onboard.group.v1') === 'rick-and-morty', 'the choice is persisted as the default')
+
+/* Signing in again must ask again: there is no auth, so each press of the
+ * sign-in button is a new person sitting down, and the stored show is only
+ * their default. Regression guard for landingAfterSignIn. */
+await click('account menu')
+await click('sign out')
+await flush(120)
+ok(localStorage.getItem('onboard.group.v1') === 'rick-and-morty', 'signing out keeps the chosen show')
+await click('Company SSO')
+await flush(150)
+ok(has('Pick your show'), 'signing in again asks for the show again, even with one stored')
+await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(150) })
+await flush(150)
 
 console.log('\n=== 1. HOME / EPISODE SELECT ===')
 ok(has('DayOne'), 'wordmark renders')
