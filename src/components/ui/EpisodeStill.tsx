@@ -83,7 +83,7 @@ export const EpisodeStill = memo(function EpisodeStill({
 
   if (src && !failed)
     return (
-      <div className={`absolute inset-0 overflow-hidden bg-ink-800 ${className}`}>
+      <div className={`absolute inset-0 overflow-hidden bg-ink-900 ${className}`}>
         {/* `contents` keeps the picture box out of layout so the img still fills. */}
         <picture className="contents">
           {srcSet && <source type="image/webp" srcSet={srcSet} sizes={sizes ?? (priority ? HERO_SIZES : CARD_SIZES)} />}
