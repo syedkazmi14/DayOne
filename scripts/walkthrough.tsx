@@ -76,7 +76,62 @@ ok(has('ONBOARD'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
 ok(has('your training. your choices.'), 'tagline')
 ok(has('THE CLIENT') && has('THE DEADLINE'), 'locked episodes on the shelf')
-ok(document.querySelectorAll('svg').length > 5, 'scene canvas + portraits render as SVG')
+ok(has('choose your cast'), 'roster carousel rendered')
+ok(has('Rick and Morty'), 'first character group panel')
+ok(has('RICK SANCHEZ') && has('MORTY SMITH') && has('SUMMER SMITH') && has('JERRY SMITH'), 'group cast cards')
+ok(document.querySelectorAll('[aria-roledescription="carousel"]').length === 1, 'carousel exposes a carousel role')
+ok(document.querySelectorAll('[role="tab"]').length === 4, 'one dot per character group')
+ok(document.querySelectorAll('img[src^="/characters/"]').length > 0, 'character artwork rendered as images')
+ok(document.querySelectorAll('img[src^="/episodes/"]').length > 0, 'episode artwork rendered as images')
+
+console.log('\n=== 1b. ROSTER CAROUSEL ===')
+const track = document.querySelector<HTMLElement>('[aria-roledescription="carousel"] [role="group"]')
+ok(!!track, 'scroll track present')
+ok(track?.className.includes('snap-x') && track?.className.includes('overflow-x-auto'), 'track uses native scroll snapping')
+ok(track?.getAttribute('tabindex') === '0', 'track is focusable for keyboard use')
+const panels = [...document.querySelectorAll<HTMLElement>('[role="tabpanel"]')]
+ok(panels.length === 4, `one panel per group (got ${panels.length})`)
+ok(panels.slice(1).every((p) => p.getAttribute('aria-hidden') === 'true'), 'off-screen panels are hidden from assistive tech')
+
+// keyboard: ArrowRight should advance the roster and take the shelf with it
+await act(async () => {
+  track!.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+  await sleep(120)
+})
+await flush(150)
+ok(has('THE GROUP CHAT'), 'ArrowRight slid to South Park and the episode shelf followed')
+ok(has('South Park · season one'), 'shelf header names the selected group')
+ok(!has('THE CLIENT'), 'the previous group’s episodes left the shelf')
+
+// arrow buttons
+const next = document.querySelector<HTMLElement>('button[aria-label="Next roster"]')
+const prev = document.querySelector<HTMLElement>('button[aria-label="Previous roster"]')
+ok(!!next && !!prev, 'carousel arrow controls present')
+await act(async () => { next!.click(); await sleep(100) })
+await flush(120)
+ok(has('THE CONFIDENT ANSWER'), 'next arrow reached Family Guy')
+ok(has('PETER GRIFFIN') && has('STEWIE GRIFFIN'), 'Family Guy cast rendered')
+
+// dots jump straight to a group
+const dots = [...document.querySelectorAll<HTMLElement>('[role="tab"]')]
+await act(async () => { dots[3].click(); await sleep(100) })
+await flush(120)
+ok(has('SECTOR 7-G') && has('HOMER SIMPSON'), 'dot jumped to The Simpsons')
+ok(dots[3].getAttribute('aria-selected') === 'true', 'active dot is marked selected')
+ok(dots[3].getAttribute('aria-controls') === 'roster-panel-the-simpsons', 'dot is wired to its panel')
+ok(dots.filter((d) => d.getAttribute('tabindex') === '0').length === 1, 'tablist uses a roving tabindex')
+
+// selecting a character marks it and drives the voice layer
+const bart = findByText('BART SIMPSON', 'button')
+ok(!!bart, 'character card is a real button')
+await act(async () => { bart!.click(); await sleep(300) })
+await flush(200)
+ok(bart!.getAttribute('aria-pressed') === 'true', 'selected character is marked pressed')
+
+// back to the playable roster
+await act(async () => { dots[0].click(); await sleep(100) })
+await flush(150)
+ok(has('FIRST') && has('THE CLIENT'), 'returned to Rick and Morty with its shelf')
 
 console.log('\n=== 2. EPISODE INTRO ===')
 await click('start episode')
@@ -85,7 +140,7 @@ ok(has('FIRST DAY'), 'episode title')
 ok(has('first day is about to get complicated'), 'subtitle')
 ok(has('cast'), 'cast block')
 ok(has('personalised before you start'), 'pre-episode adaptation notice')
-ok(has('DEX KOVAL') && has('MILO PARK') && has('VERA OKONJO'), 'cast listed')
+ok(has('RICK SANCHEZ') && has('MORTY SMITH') && has('SUMMER SMITH'), 'cast listed')
 
 console.log('\n=== 3. CINEMATIC SCENES ===')
 await click('start episode')
@@ -98,7 +153,7 @@ let sawSpeaker = false
 for (let i = 0; i < 14; i++) {
   const overlay = document.querySelector<HTMLElement>('.absolute.inset-0.z-20.flex.cursor-pointer')
   if (!overlay) break
-  if (has('MILO PARK') || has('DEX KOVAL')) sawSpeaker = true
+  if (has('MORTY SMITH') || has('RICK SANCHEZ')) sawSpeaker = true
   await act(async () => { overlay.click(); await sleep(40) })
   await act(async () => { overlay.click(); await sleep(40) })
 }
@@ -128,12 +183,12 @@ ok(has('THREAT CONTAINED'), 'consequence banner for the strong choice')
 ok(has('what actually happened'), 'lesson revealed after the world reacted')
 ok(has('K-PHI-01'), 'citation chips')
 ok(has('BEAT THE HOUSE') || has('HOUSE'), 'wager settled')
-ok(has('talk to Vera'), 'character chat offered')
+ok(has('talk to Summer'), 'character chat offered')
 
 console.log('\n=== 7. CHARACTER CHAT (text) ===')
-await click('talk to Vera')
+await click('talk to Summer')
 await flush(200)
-ok(has('VERA OKONJO'), 'chat header')
+ok(has('SUMMER SMITH'), 'chat header')
 ok(has('GROUNDED LOCAL') || has('LIVE'), 'llm mode surfaced honestly')
 ok(has('rag ·'), 'retrieval status')
 const suggestion = findByText('Why was that email suspicious', 'button')
@@ -195,7 +250,7 @@ ok(has('adaptive learning agent'), 'agent attributed')
 await act(async () => { await sleep(3300) })
 await flush(300)
 const VARIANTS: [string, string][] = [
-  ['DEX’S DESK', 'THE FAVOUR / credential sharing'],
+  ['RICK’S DESK', 'THE FAVOUR / credential sharing'],
   ['DESK PHONE', 'THE CALL / voice phishing'],
   ['THE WEEKEND', 'THE WEEKEND / bulk export'],
 ]

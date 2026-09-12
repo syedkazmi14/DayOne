@@ -1,9 +1,19 @@
 import { motion } from 'framer-motion'
 import { Star } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
-export const Eyebrow = ({ children, className = '' }: { children: ReactNode; className?: string }) => (
-  <div className={`t-eyebrow ${className}`}>{children}</div>
+export const Eyebrow = ({
+  children,
+  className = '',
+  style,
+}: {
+  children: ReactNode
+  className?: string
+  style?: CSSProperties
+}) => (
+  <div className={`t-eyebrow ${className}`} style={style}>
+    {children}
+  </div>
 )
 
 export function Chip({

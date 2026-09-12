@@ -8,8 +8,9 @@ import { getCharacter } from '@/content/characters'
 import type { ChatTurn } from '@/types'
 import { useGame } from '@/engine/gameStore'
 import { speak, startMic, stopAllSpeech, ttsTier, voiceLabel, type MicSession } from '@/voice/voice'
+import { resolveVoiceProfile } from '@/voice/voiceProfiles'
 import { Chip } from './ui/Bits'
-import { CharacterPortrait } from './ui/CharacterPortrait'
+import { CharacterAvatar } from './ui/CharacterAvatar'
 
 /* ============================================================================
  * CHARACTER CHAT — text and voice.
@@ -37,6 +38,8 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
   const [lastPrompt, setLastPrompt] = useState<string>('')
   const [lastHits, setLastHits] = useState<{ id: string; topic: string; score: number }[]>([])
   const [lastConfidence, setLastConfidence] = useState<number | null>(null)
+  /** Set when speech had to degrade a tier. Shown, never thrown. */
+  const [voiceNote, setVoiceNote] = useState<string | null>(null)
 
   // voice capture
   const [recording, setRecording] = useState(false)
@@ -104,6 +107,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
         // on screen, so a band repeating it verbatim is just noise.
         if (viaVoice || mode === 'voice') setSubtitle(reply.text)
         const handle = await speak(reply.text, ch)
+        setVoiceNote(handle.failureMessage ?? null)
         await handle.done
         setSpeaking(false)
         setTimeout(() => setSubtitle(null), 900)
@@ -156,7 +160,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
           style={{ background: `radial-gradient(120% 140% at 82% 0%, ${ch.accent}, transparent 62%)` }}
         />
         <div className="relative flex items-start gap-4 px-5 py-4">
-          <CharacterPortrait character={ch} size={68} speaking={speaking} />
+          <CharacterAvatar character={ch} size={68} priority speaking={speaking} className="shrink-0 border border-bone/10" />
           <div className="min-w-0 flex-1 pt-1">
             <div className="font-sans text-[17px] font-bold uppercase tracking-[0.05em]" style={{ color: ch.accent }}>
               {ch.name}
@@ -171,6 +175,10 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
         <div className="relative flex flex-wrap items-center gap-1.5 px-5 pb-3">
           <Chip tone="cyan">{llmLabel()}</Chip>
           <Chip tone="neutral">rag · {knowledgeCount} rules</Chip>
+          <Chip tone="neutral">
+            <Volume2 size={10} />
+            {resolveVoiceProfile(ch.voiceProfileId).label.split(' — ')[0]}
+          </Chip>
           {lastConfidence !== null && (
             <Chip tone={lastConfidence >= 0.3 ? 'good' : 'danger'}>
               {lastConfidence >= 0.3 ? <ShieldCheck size={10} /> : <ShieldAlert size={10} />}
@@ -186,6 +194,11 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
             {voiceOut ? <Volume2 size={14} /> : <VolumeX size={14} />}
           </button>
         </div>
+        {voiceNote && (
+          <p className="relative px-5 pb-3 font-mono text-[9px] uppercase leading-relaxed tracking-[0.12em] text-danger">
+            {voiceNote}
+          </p>
+        )}
       </div>
 
       {/* transcript */}

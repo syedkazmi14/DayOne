@@ -48,9 +48,33 @@ export interface ConceptMeta {
 
 /* --------------------------------------------------------------- characters */
 
+/**
+ * A locally-served image. Every asset the UI renders comes from this origin
+ * (see scripts/fetchAssets.mjs) so card art never depends on a third-party CDN
+ * staying up. `src` is still allowed to be an absolute URL — the components
+ * fall back to generated art when a load fails either way.
+ */
+export interface ImageSpec {
+  src: string
+  alt?: string
+  /** CSS object-position, so a crop can be nudged per asset without new code. */
+  focus?: string
+  /** Where the asset came from, for the attribution line. */
+  credit?: string
+}
+
+/**
+ * Which opener/closer table the offline grounded composer speaks through.
+ * Keyed on archetype rather than character id so adding a character is a pure
+ * data change — no new branch anywhere in src/ai.
+ */
+export type SpeechArchetype = 'chaotic' | 'anxious' | 'pragmatic' | 'authority'
+
 export interface Character {
   id: string
   name: string
+  /** Which roster group this character belongs to. */
+  groupId: string
   role: string
   /** One line the player sees on the character card. */
   tagline: string
@@ -58,13 +82,23 @@ export interface Character {
   persona: string
   /** Hard behavioural rails handed to the conversation agent. */
   speechRules: string[]
+  speechArchetype: SpeechArchetype
+  /** In-character hellos. The first one doubles as the voice-preview line. */
+  greetings: string[]
+  /** What they say when retrieval comes back empty. Never a guess. */
+  refusal: string
+  /** Optional in-character sign-offs. */
+  closers: string[]
   accent: string
+  /** Portrait artwork. Absent or failing, the SVG portrait stands in. */
+  avatar?: ImageSpec
   portrait: PortraitSpec
-  voice: VoiceSpec
+  /** Key into the voice registry — see src/voice/voiceProfiles.ts. */
+  voiceProfileId: string
   /** Placeholder-cast bookkeeping: a company can swap in licensed assets. */
   casting: {
     archetype: string
-    assetSource: 'placeholder_original' | 'licensed' | 'customer_uploaded'
+    assetSource: 'placeholder_original' | 'licensed' | 'community_wiki' | 'customer_uploaded'
   }
 }
 
@@ -75,12 +109,15 @@ export interface PortraitSpec {
   hue2: string
 }
 
-export interface VoiceSpec {
-  /** ElevenLabs voice id — used only when a real key is configured. */
-  elevenLabsVoiceId: string
-  label: string
-  /** Browser-synth fallback shaping, so mocked voice still feels in-character. */
-  fallback: { rate: number; pitch: number }
+/** One swipeable panel on the home-screen roster carousel. */
+export interface CharacterGroup {
+  id: string
+  name: string
+  /** Sits under the group title. */
+  tagline: string
+  accent: string
+  /** Ordered — this is the card order inside the panel. */
+  characterIds: string[]
 }
 
 /* ------------------------------------------------------------------ episode */
@@ -154,6 +191,8 @@ export interface Episode {
   code: string
   title: string
   subtitle: string
+  /** Which roster group this episode belongs to. Drives the home-screen shelf. */
+  groupId: string
   topic: string
   duration: string
   locked: boolean
@@ -161,6 +200,12 @@ export interface Episode {
   concepts: ConceptId[]
   cast: string[]
   entrySceneId: string
+  /**
+   * Still image shown behind the episode title, on the shelf card and on the
+   * intro screen. Pure data: swap the `src` and the UI follows, no component
+   * changes. Absent or failing to load, the procedural card art stands in.
+   */
+  image?: ImageSpec
   /** Card art for episodes with no graph yet — keeps the shelf consistent. */
   poster?: ShotSpec
   scenes: Record<string, Scene>

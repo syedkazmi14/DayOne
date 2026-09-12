@@ -11,29 +11,42 @@ the characters about what just happened.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run assets   # fetch character + episode artwork into public/ (once)
+npm run dev      # http://localhost:5173 — Vite + the voice proxy
 ```
 
 No API keys required. The prototype runs fully offline and says so.
+
+To hear the real ElevenLabs voices, give the **server** the key — it is never
+put in the client bundle:
+
+```bash
+echo 'ELEVENLABS_API_KEY=sk_...' >> .env.local   # gitignored
+npm run dev
+```
 
 ---
 
 ## The demo path
 
-1. **Episode lobby** — `FIRST DAY · Episode 01 · Cybersecurity`
-2. **Episode intro** — cast, concepts, and a note saying which act has already
+1. **Episode lobby** — the roster carousel: swipe or drag horizontally between
+   character groups (Rick and Morty → South Park → Family Guy → The Simpsons).
+   Tap a character to select them and hear their voice; the hero and the episode
+   shelf follow the group you land on.
+2. **Featured episode** — `FIRST DAY · Episode 01 · Cybersecurity`
+3. **Episode intro** — cast, concepts, and a note saying which act has already
    been personalised for you
-3. **Cinematic scenes** — full-bleed, letterboxed, subtitled dialogue
-4. **Risk terminal** — wager virtual credits against the system's estimate of
+4. **Cinematic scenes** — full-bleed, letterboxed, subtitled dialogue
+5. **Risk terminal** — wager virtual credits against the system's estimate of
    whether you'll get this one right
-5. **Decision** — three defensible options, none of them flagged
-6. **Consequence** — the world reacts *first*; the explanation comes after
-7. **Character chat** — text or voice, grounded in the knowledge base, with a
+6. **Decision** — three defensible options, none of them flagged
+7. **Consequence** — the world reacts *first*; the explanation comes after
+8. **Character chat** — text or voice, grounded in the knowledge base, with a
    retrieval inspector that shows the evidence
-8. **Adaptive act three** — built around your weakest demonstrated concept
-9. **Results + AI coach** — what your decisions revealed, and what changes next
-10. **Profile** — mastery scores that actually drive 8 and 9
-11. **Studio** — watch company documents become an episode
+9. **Adaptive act three** — built around your weakest demonstrated concept
+10. **Results + AI coach** — what your decisions revealed, and what changes next
+11. **Profile** — mastery scores that actually drive 9 and 10
+12. **Studio** — watch company documents become an episode
 
 `npm run verify` clicks through all of it headlessly (see *Verification*).
 
@@ -120,7 +133,7 @@ Nothing here pretends to be an integration it is not; the UI states its tier.
 | **Character replies** | Deterministic in-voice composer over the same retrieval + citations. Labelled `GROUNDED LOCAL`. | Real completions. Labelled `LIVE · <model>`. |
 | **AI coach** | Real analysis of the decision log (speed/accuracy correlation, threat-shape bias, wager calibration), template-realised. | Same signals, model-written prose. |
 | **Knowledge extraction** | Replays pre-extracted knowledge for this corpus, staged so the pipeline is visible. | Actually extracts from the document excerpts. |
-| **Text-to-speech** | Browser speech engine. Labelled `BROWSER SYNTH`. | ElevenLabs per-character voice ids. |
+| **Text-to-speech** | Browser speech engine, shaped per character by the voice profile's `fallback` rate/pitch. Labelled `BROWSER SYNTH`. | ElevenLabs, one cast voice per character, resolved through `src/voice/voiceProfiles.ts`. Labelled `ELEVENLABS`. |
 | **Speech-to-text** | **Real** mic capture and waveform via `getUserMedia`; Web Speech transcription where the browser has it, otherwise a clearly-labelled `SIMULATED` transcript. | Scribe boundary in place (`src/voice/voice.ts`); blob capture intentionally not wired — untested code on stage is worse than an honest stub. |
 | **Video** | Procedural cinematic previs rendered from each scene's `shot` spec (env / time-of-day / mood), plus the text-to-video prompt the authoring pipeline would send. | `Scene.shot.videoUrl` is played directly if present. |
 
@@ -134,14 +147,60 @@ See `.env.example` to go live.
 
 ---
 
+## Voice
+
+```
+character  ->  voiceProfileId  ->  VoiceProfile  ->  ElevenLabs
+```
+
+`src/voice/voiceProfiles.ts` is the **only** file in the app that contains an
+ElevenLabs voice id. A character carries a `voiceProfileId` and nothing else
+about speech synthesis, so selecting a character is all it takes to change the
+voice — in the chat panel, in a scene, or in the home-screen preview. Adding a
+character is a data change in `content/characters.ts`; adding a voice is a data
+change in `voiceProfiles.ts`. No component talks to ElevenLabs.
+
+**The API key is server-side only.** `server/voiceProxy.mjs` reads
+`ELEVENLABS_API_KEY` from the environment — deliberately *not* `VITE_`-prefixed,
+so Vite cannot inline it — and the browser posts text to `/api/voice/tts`.
+`npm run dev` starts the proxy alongside Vite and `vite.config.ts` forwards
+`/api/voice` to it. If the proxy is absent the app falls back to the browser
+speech engine and relabels itself; it never claims a tier it does not have.
+
+Each profile holds two ids. `voiceId` is the **cast** voice — a community
+("shared library") voice picked for its fit to the character, which the API only
+serves to Creator tier and above. `fallbackVoiceId` is the nearest **premade**
+voice, which every plan can use including Free. The proxy tries the cast voice
+first and silently retries with the fallback when the plan rejects it, so the
+same build works on either key; the response reports which voice actually spoke.
+
+All sixteen cast voices were auditioned against the live API: each returns audio
+and all sixteen are acoustically distinct.
+
+Failures degrade rather than throw: a missing profile falls back to the narrator
+voice, and no key / API error / blocked autoplay each drop to the browser voice
+and surface a one-line note in the UI.
+
 ## Cast and licensing
 
-The cast — **Dex Koval, Milo Park, Noor Abasi, Vera Okonjo** — are original
-characters written for this prototype. No real person, celebrity, or licensed
-property is represented and no voice is cloned. Each character records its
-archetype and `casting.assetSource: 'placeholder_original'`, so a customer can
-swap in licensed or self-recorded portraits and voice ids at the asset layer
-without touching the episode graph.
+The roster is four groups of four, defined in `content/characterGroups.ts`:
+**Rick and Morty** (Rick, Morty, Summer, Jerry) · **South Park** (Cartman, Stan,
+Kyle, Kenny) · **Family Guy** (Peter, Stewie, Brian, Lois) · **The Simpsons**
+(Homer, Bart, Marge, Lisa).
+
+> **These are placeholder casting, not cleared assets.** The artwork is show
+> screenshots and promotional art fetched from community wikis by
+> `npm run assets` (see `scripts/fetchAssets.mjs`) and served locally; the
+> voices are ElevenLabs library voices cast for archetype fit, not clones of
+> any performer. Fine for a prototype, **not licensed for commercial use**.
+> Every character records `casting.assetSource: 'community_wiki'`, so a customer
+> swaps in licensed or self-recorded portraits and voice ids at the asset layer
+> without touching the episode graph.
+
+Characters speak through one of four `speechArchetype`s (`chaotic`, `anxious`,
+`pragmatic`, `authority`), which is what keeps sixteen characters from becoming
+sixteen branches in `src/ai/characterAgent.ts`. Their individual colour —
+greetings, refusal line, sign-offs — lives in the character data.
 
 ## Risk mechanic
 
@@ -160,8 +219,10 @@ src/
   types.ts                  the whole data model — episodes are data, not JSX
   content/
     knowledge.ts            14 citable rules (output shape of the Knowledge Agent)
-    characters.ts           cast: persona, speech rails, voice ids, casting notes
+    characters.ts           16 characters: persona, speech rails, art, voice ref
+    characterGroups.ts      the four rosters the home carousel renders
     sourceDocs.ts           the "boring material" the Studio screen ingests
+    episodes/index.ts       12 episodes, grouped, each with an image
     episodes/firstDay.ts    33-scene episode graph, 4 acts, 3 adaptive variants
   engine/
     gameStore.tsx           the reducer — every transition in the experience
@@ -174,14 +235,23 @@ src/
     knowledgeAgent.ts       staged extraction pipeline
     scenarioGenerator.ts    rule → playable scene + shot prompts
     llm.ts                  the only provider seam
-  voice/voice.ts            ElevenLabs / browser / simulated tiers
+  voice/
+    voiceProfiles.ts        the only place ElevenLabs voice ids live
+    voice.ts                proxy / direct / browser / simulated tiers
+    useVoiceStatus.ts       React binding for async provider discovery
   components/
+    CharacterCarousel.tsx   the roster carousel (native scroll-snap + drag)
     SceneCanvas.tsx         procedural cinematic previs per shot spec
     DialogueOverlay.tsx     ChoicePanel.tsx  RiskTerminal.tsx
     ConsequencePanel.tsx    CharacterChat.tsx  EpisodeProgress.tsx
-    ui/                     CharacterPortrait.tsx (SVG duotone), Grain, Bits
+    ui/                     CharacterAvatar (art + SVG fallback), EpisodeStill,
+                            CharacterPortrait.tsx (SVG duotone), Grain, Bits
     screens/                Home · EpisodeIntro · ScenePlayer · Results
                             PlayerProfile · Authoring (Studio)
+server/voiceProxy.mjs       holds ELEVENLABS_API_KEY; POST /api/voice/tts
+scripts/fetchAssets.mjs     downloads + crops character and episode artwork
+public/characters/*.jpg     640x640, one per character
+public/episodes/*.jpg       1280x720, one per episode
 ```
 
 ## Verification
@@ -198,14 +268,21 @@ every scene reachable, one terminal, every decision has exactly one strong and
 one poor option, every citation exists, no lesson says "correct"), that
 retrieval grounds on-topic questions and refuses off-topic ones, that every
 character reply is cited and speakable, and that the mastery, wager and coach
-models behave across a perfect run, a worst run and a mixed run.
+models behave across a perfect run, a worst run and a mixed run. It also checks
+the roster: no character in two groups, every group fields four resolvable
+characters, every character resolves to an existing voice profile with a
+premade fallback id, every episode is grouped and cast from its own group, and
+**every character portrait and episode still actually exists on disk**.
 
 `verify:walkthrough` renders the real app in jsdom and plays it twice — once
 taking the strong branch through all four acts, once the failing branch —
 clicking dialogue, wagering, deciding, asking the characters three questions
 (including one the knowledge base cannot answer), opening the retrieval
 inspector, switching to voice mode, and reading the results. It asserts the two
-runs get *different* adaptive act threes.
+runs get *different* adaptive act threes. It also drives the roster carousel —
+arrow keys, arrow buttons and dots — and asserts the hero and episode shelf
+follow the group, that off-screen panels are hidden from assistive tech, and
+that selecting a character marks it pressed.
 
 ## Stack
 
@@ -213,7 +290,15 @@ React 18 · TypeScript · Tailwind · Framer Motion · Lucide · Vite
 
 ## Known limits
 
-- Episodes 02 and 03 are authored stubs — shelf metadata, no graph yet.
+- **Artwork and voices are placeholder casting, not licensed.** See
+  *Cast and licensing*.
+- The cast voices are community-library voices and need a **Creator-tier key or
+  above**. On a Free key the proxy silently degrades to each profile's premade
+  `fallbackVoiceId`; there are only four premade young-male voices for five
+  young-male characters, so on Free, Cartman and Bart share one, separated only
+  by pitch and pacing. Both have distinct cast voices.
+- `FIRST DAY` is the only episode with a scene graph. The other eleven are
+  authored stubs — shelf metadata and card art, no graph yet.
 - One episode graph is hand-authored as the reference output of the pipeline;
   the Studio screen generates scene fragments, not whole graphs.
 - Progression persists to `localStorage` only.

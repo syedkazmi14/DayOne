@@ -1,6 +1,20 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer } from 'react'
 import { getEpisode } from '@/content/episodes'
-import type { ChatTurn, Choice, ConceptId, DecisionRecord, Episode, Mastery, PlayerState, Scene, WagerResult } from '@/types'
+import { DEFAULT_GROUP_ID, getGroup } from '@/content/characterGroups'
+import { getCharacter } from '@/content/characters'
+import type {
+  Character,
+  CharacterGroup,
+  ChatTurn,
+  Choice,
+  ConceptId,
+  DecisionRecord,
+  Episode,
+  Mastery,
+  PlayerState,
+  Scene,
+  WagerResult,
+} from '@/types'
 import { adaptationRationale, applyDecision, baselineMastery, episodeScore, levelFromXp, weakestConcept } from './adaptive'
 import { resolveWager, type WagerOption } from './risk'
 
@@ -26,6 +40,13 @@ export interface Adaptation {
 export interface GameState {
   view: View
   player: PlayerState
+  /** Which roster panel the home carousel is resting on. */
+  groupId: string
+  /**
+   * Who the player last selected on the home screen. Voice playback resolves
+   * this character's voice profile, so selection alone changes the voice.
+   */
+  selectedCharacterId: string | null
   episodeId: string | null
   sceneId: string | null
   phase: Phase
@@ -79,6 +100,8 @@ const savePlayer = (p: PlayerState) => {
 const initialState = (): GameState => ({
   view: 'home',
   player: loadPlayer(),
+  groupId: DEFAULT_GROUP_ID,
+  selectedCharacterId: null,
   episodeId: null,
   sceneId: null,
   phase: 'dialogue',
@@ -98,6 +121,8 @@ const initialState = (): GameState => ({
 
 type Action =
   | { type: 'GOTO'; view: View }
+  | { type: 'SELECT_GROUP'; groupId: string }
+  | { type: 'SELECT_CHARACTER'; characterId: string }
   | { type: 'SELECT_EPISODE'; episodeId: string }
   | { type: 'START_EPISODE' }
   | { type: 'ADVANCE_DIALOGUE' }
@@ -164,8 +189,25 @@ function reducer(state: GameState, action: Action): GameState {
     case 'GOTO':
       return { ...state, view: action.view }
 
-    case 'SELECT_EPISODE':
-      return { ...state, episodeId: action.episodeId, view: 'intro' }
+    case 'SELECT_GROUP': {
+      const group = getGroup(action.groupId)
+      if (group.id === state.groupId) return state
+      // Sliding to another roster drops a selection that belonged to the old
+      // one, so the voice never lags a group behind the visible cast.
+      const keep = state.selectedCharacterId && getCharacter(state.selectedCharacterId).groupId === group.id
+      return { ...state, groupId: group.id, selectedCharacterId: keep ? state.selectedCharacterId : null }
+    }
+
+    case 'SELECT_CHARACTER': {
+      const ch = getCharacter(action.characterId)
+      return { ...state, selectedCharacterId: ch.id, groupId: ch.groupId }
+    }
+
+    case 'SELECT_EPISODE': {
+      const chosen = getEpisode(action.episodeId)
+      if (!chosen) return state
+      return { ...state, episodeId: chosen.id, groupId: chosen.groupId, view: 'intro' }
+    }
 
     case 'START_EPISODE': {
       const e = getEpisode(state.episodeId ?? '')
@@ -312,6 +354,10 @@ interface Store {
   dispatch: React.Dispatch<Action>
   episode: Episode | undefined
   scene: Scene | undefined
+  /** The roster panel currently in view on the home screen. */
+  group: CharacterGroup
+  /** Who the player selected on the home screen, if anyone. */
+  selectedCharacter: Character | undefined
   /** Concepts live in the current moment — scopes retrieval for character chat. */
   activeConcepts: ConceptId[]
   advance: () => void
@@ -323,6 +369,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, initialState)
   const episode = state.episodeId ? getEpisode(state.episodeId) : undefined
   const scene = episode && state.sceneId ? episode.scenes[state.sceneId] : undefined
+  const group = getGroup(state.groupId)
+  const selectedCharacter = state.selectedCharacterId ? getCharacter(state.selectedCharacterId) : undefined
 
   const activeConcepts = useMemo<ConceptId[]>(() => {
     const fromChoices = scene?.choices?.flatMap((c) => c.knowledgeConcepts) ?? []
@@ -335,8 +383,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const advance = useCallback(() => dispatch({ type: 'ADVANCE_DIALOGUE' }), [])
 
   const value = useMemo<Store>(
-    () => ({ state, dispatch, episode, scene, activeConcepts, advance }),
-    [state, episode, scene, activeConcepts, advance],
+    () => ({ state, dispatch, episode, scene, group, selectedCharacter, activeConcepts, advance }),
+    [state, episode, scene, group, selectedCharacter, activeConcepts, advance],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

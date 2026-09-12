@@ -4,15 +4,14 @@ import { getCharacter } from '@/content/characters'
 import { conceptLabel } from '@/content/knowledge'
 import { useGame } from '@/engine/gameStore'
 import { weakestConcept } from '@/engine/adaptive'
-import { SceneCanvas } from '../SceneCanvas'
 import { Chip, Eyebrow } from '../ui/Bits'
-import { CharacterPortrait } from '../ui/CharacterPortrait'
+import { CharacterAvatar } from '../ui/CharacterAvatar'
+import { EpisodeStill } from '../ui/EpisodeStill'
 
 export function EpisodeIntro() {
   const { state, dispatch, episode } = useGame()
   if (!episode) return null
 
-  const entry = episode.scenes[episode.entrySceneId]
   const adaptiveSlot = Object.values(episode.scenes).find((s) => s.variants?.length)
   const focus = adaptiveSlot
     ? weakestConcept(state.player.mastery, adaptiveSlot.variants!.map((v) => v.conceptFocus))
@@ -20,8 +19,8 @@ export function EpisodeIntro() {
 
   return (
     <div className="relative h-full overflow-hidden">
-      <SceneCanvas shot={entry.shot} sceneKey={`intro-${episode.id}`} />
-      <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/80 to-ink-900/35" />
+      <EpisodeStill episode={episode} sceneKey={`intro-${episode.id}`} priority />
+      <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/82 to-ink-900/40" />
 
       <button
         onClick={() => dispatch({ type: 'GOTO', view: 'home' })}
@@ -112,7 +111,7 @@ export function EpisodeIntro() {
                       transition={{ delay: 0.35 + i * 0.09 }}
                       className="glass flex items-center gap-4 p-3"
                     >
-                      <CharacterPortrait character={ch} size={58} />
+                      <CharacterAvatar character={ch} size={58} priority className="shrink-0 border border-bone/10" />
                       <div className="min-w-0">
                         <div className="font-sans text-[13px] font-bold uppercase tracking-[0.06em]" style={{ color: ch.accent }}>
                           {ch.name}
@@ -127,7 +126,7 @@ export function EpisodeIntro() {
                 })}
               </div>
               <p className="mt-4 font-mono text-[9px] uppercase leading-relaxed tracking-[0.12em] text-bone-faint">
-                original placeholder cast · licensed or customer-recorded characters swap in at the asset layer
+                placeholder casting · artwork and voices swap in at the asset layer, not in the episode graph
               </p>
             </motion.div>
           </div>

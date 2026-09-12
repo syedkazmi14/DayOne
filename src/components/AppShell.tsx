@@ -1,7 +1,8 @@
 import { Coins, Layers, Mic, Sparkles, User } from 'lucide-react'
 import { llmLabel, llmMode } from '@/ai/llm'
 import { useGame, type View } from '@/engine/gameStore'
-import { sttTier, ttsTier, voiceLabel } from '@/voice/voice'
+import { voiceLabel } from '@/voice/voice'
+import { useVoiceStatus } from '@/voice/useVoiceStatus'
 import { FilmOverlay } from './ui/Grain'
 
 /* ============================================================================
@@ -16,6 +17,9 @@ const NAV: { view: View; label: string; Icon: typeof Layers }[] = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { state, dispatch } = useGame()
+  // Provider discovery is async, so this re-renders once the probe lands
+  // rather than permanently claiming the fallback tier.
+  const voice = useVoiceStatus()
   /* The cinematic screens carry their own chrome — a second header would
    * collide with their own back button and break the full-bleed frame. */
   const inScene = state.view === 'scene' || state.view === 'intro' || state.view === 'results'
@@ -71,10 +75,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </span>
           <span className="hidden items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint sm:flex">
             <Mic size={9} />
-            tts {voiceLabel(ttsTier())} · stt {voiceLabel(sttTier())}
+            {voice.pending ? 'voice · detecting…' : `tts ${voiceLabel(voice.tts)} · stt ${voiceLabel(voice.stt)}`}
           </span>
           <span className="ml-auto hidden font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint sm:inline">
-            prototype · original cast · virtual credits only
+            prototype · placeholder cast · virtual credits only
           </span>
         </footer>
       )}

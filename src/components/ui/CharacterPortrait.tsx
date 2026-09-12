@@ -74,6 +74,8 @@ const FIGURE: Record<Build, Figure> = {
 interface Props {
   character: Character
   size?: number
+  /** Stretch to the parent box instead of a fixed pixel size. */
+  fill?: boolean
   speaking?: boolean
   dim?: boolean
   className?: string
@@ -82,6 +84,7 @@ interface Props {
 export const CharacterPortrait = memo(function CharacterPortrait({
   character,
   size = 160,
+  fill = false,
   speaking = false,
   dim = false,
   className = '',
@@ -92,8 +95,12 @@ export const CharacterPortrait = memo(function CharacterPortrait({
 
   return (
     <div
-      className={`relative ${className}`}
-      style={{ width: size, height: size * 1.15, opacity: dim ? 0.4 : 1, transition: 'opacity .5s' }}
+      className={`relative ${fill ? 'h-full w-full' : ''} ${className}`}
+      style={{
+        ...(fill ? {} : { width: size, height: size * 1.15 }),
+        opacity: dim ? 0.4 : 1,
+        transition: 'opacity .5s',
+      }}
     >
       <svg viewBox="0 0 200 230" className="h-full w-full drag-none" aria-label={character.name}>
         <defs>

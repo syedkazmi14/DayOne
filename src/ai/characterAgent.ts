@@ -1,5 +1,5 @@
 import { getCharacter } from '@/content/characters'
-import type { Character, ChatTurn, ConceptId, KnowledgeItem } from '@/types'
+import type { Character, ChatTurn, ConceptId, KnowledgeItem, SpeechArchetype } from '@/types'
 import { complete, isLive, LLMUnavailable } from './llm'
 import { CONFIDENCE_FLOOR, retrieve, tokenize, type RetrievalResult } from './retrieval'
 
@@ -155,10 +155,15 @@ function bestEdgeCase(item: KnowledgeItem, q: string): string | undefined {
   return best && best.n > 0 ? best.t : item.edgeCases[0]
 }
 
-const OPENERS: Record<string, Record<Intent | 'default', string[]>> = {
-  dex: {
+/**
+ * Opener tables keyed on SPEECH ARCHETYPE, not character id. Four archetypes
+ * cover sixteen characters, and the character-specific colour (greeting,
+ * refusal, sign-off) lives in the character data instead — so casting a new
+ * character never adds a branch here.
+ */
+const OPENERS: Record<SpeechArchetype, Record<Exclude<Intent, 'greeting'> | 'default', string[]>> = {
+  chaotic: {
     default: ['Look. ', 'Honestly? ', 'Right, so. '],
-    greeting: ['Dex. I write the things that break.', 'Hey. Do not take my advice this morning, apparently.'],
     why: ['Because — and I hate this — ', 'Fine. Because '],
     how: ['Easy. ', 'The boring way. '],
     whatif: ['Sure, edge case. ', 'Yeah, that one comes up. '],
@@ -168,9 +173,8 @@ const OPENERS: Record<string, Record<Intent | 'default', string[]>> = {
     meta: ['You want the honest version? ', 'Eh. '],
     explain: ['Look. ', 'Short version. '],
   },
-  milo: {
+  anxious: {
     default: ['Okay, so — ', 'Right, um — '],
-    greeting: ['Hi! Sorry. Hi.', 'Oh — hey. I am still working out where the coffee is.'],
     why: ['Okay so I think — and I did read this bit — ', 'Because, um, '],
     how: ['I actually know this one. ', 'Okay so what I do is — '],
     whatif: ['Ooh, I thought about that too. ', 'I asked someone this exact thing. '],
@@ -180,9 +184,8 @@ const OPENERS: Record<string, Record<Intent | 'default', string[]>> = {
     meta: ['I mean — I am not the person to judge. ', 'Honestly? '],
     explain: ['So the way I understand it, ', 'Okay so — '],
   },
-  noor: {
+  pragmatic: {
     default: ['Practically: ', 'Here is the version that matters: '],
-    greeting: ['Noor. Customer ops. I have four minutes and I like you already.', 'Hi. Ask fast, I am on a call at half past.'],
     why: ['Because ', 'Simple. Because '],
     how: ['Fastest compliant route: ', 'Do it like this: '],
     whatif: ['That happens weekly. ', 'Good question, it is the real one. '],
@@ -192,9 +195,8 @@ const OPENERS: Record<string, Record<Intent | 'default', string[]>> = {
     meta: ['From where I was standing? ', 'Honestly, '],
     explain: ['Here is how it works in practice. ', 'Right. So '],
   },
-  vera: {
+  authority: {
     default: ['', ''],
-    greeting: ['Vera Okonjo, Security. Ask me anything — that is genuinely the job.', 'Vera. Head of Security. You are not in trouble, by the way.'],
     why: ['Because of the mechanism. ', 'Here is the mechanism. '],
     how: ['', 'The process is short. '],
     whatif: ['That is the interesting case. ', 'Good — that is where people get caught. '],
@@ -204,13 +206,6 @@ const OPENERS: Record<string, Record<Intent | 'default', string[]>> = {
     meta: ['Straight answer. ', 'I will be direct. '],
     explain: ['', ''],
   },
-}
-
-const CLOSERS: Record<string, string[]> = {
-  dex: ['Do not tell Vera I explained a policy correctly.', 'Anyway. I have a deploy.', 'That is the whole trick.'],
-  milo: ['I think that is right? Ask Vera if it matters a lot.', 'Sorry, that was a lot of words.', 'I wrote it on a sticky note, honestly.'],
-  noor: ['It costs about two minutes. I checked.', 'That is the part nobody explains.', 'Then get on with your day.'],
-  vera: ['Report it and I will handle the rest.', 'That is the whole standard.', 'Ask me again any time.'],
 }
 
 const cite = (item: KnowledgeItem) => `${item.source.doc} § ${item.source.section}`
@@ -234,22 +229,16 @@ function composeGrounded(
 ): Composed {
   const intent = classify(question)
   const seed = hash(question + ch.id)
-  const openers = OPENERS[ch.id] ?? OPENERS.vera
-  const opener = pick(openers[intent] ?? openers.default, seed)
+  const openers = OPENERS[ch.speechArchetype] ?? OPENERS.authority
 
   if (intent === 'greeting')
-    return { text: pick(openers.greeting, seed), grounded: true, used: [], kind: 'greeting' }
+    return { text: pick(ch.greetings, seed), grounded: true, used: [], kind: 'greeting' }
+
+  const opener = pick(openers[intent] ?? openers.default, seed)
 
   const top = r.hits[0]?.item
-  if (!top || r.confidence < CONFIDENCE_FLOOR) {
-    const refusals: Record<string, string> = {
-      dex: 'Genuinely no idea, and I am not going to invent a policy at you. Ask Security — Vera actually likes being asked.',
-      milo: 'Um — I do not know that one, and I do not want to guess and be wrong at you. The Security Portal has a question box? I used it twice.',
-      noor: 'I do not know, and a confident guess from me is worth nothing here. Put it to Security; they answer same-day.',
-      vera: 'I do not have that in our policy set, so I am not going to improvise an answer. Send it to the Security Portal and I will get you something written down.',
-    }
-    return { text: refusals[ch.id] ?? refusals.vera, grounded: false, used: [], kind: 'refusal' }
-  }
+  if (!top || r.confidence < CONFIDENCE_FLOOR)
+    return { text: ch.refusal, grounded: false, used: [], kind: 'refusal' }
 
   const second = r.hits[1]?.item
   const used = new Set<string>([top.id])
@@ -311,21 +300,22 @@ function composeGrounded(
       if (top.commonMistake) parts.push(sent(`Where people trip is ${low(strip(top.commonMistake))}`))
   }
 
-  // Vera cites documents by section; nobody else talks like that.
-  if (ch.id === 'vera') parts.push(sent(`That is ${cite(top)}`))
-  else if (ch.id === 'milo' && seed % 2 === 0)
+  // The authority archetype cites by document and section; nobody else talks
+  // like that. The anxious one name-drops the handbook to prove it read it.
+  if (ch.speechArchetype === 'authority') parts.push(sent(`That is ${cite(top)}`))
+  else if (ch.speechArchetype === 'anxious' && seed % 2 === 0)
     parts.push(sent(`It is in the ${top.source.doc.replace(/\s+v?[\d.]+$/, '')}, I checked`))
 
   if (second && seed % 3 === 0) {
     used.add(second.id)
     parts.push(
-      ch.id === 'vera'
+      ch.speechArchetype === 'authority'
         ? sent(`Related, and people miss it: ${low(strip(firstSentence(second.rule)))}`)
         : sent(`Also — ${low(strip(firstSentence(second.rule)))}`),
     )
   }
 
-  if (seed % 4 === 0) parts.push(pick(CLOSERS[ch.id] ?? CLOSERS.vera, seed))
+  if (seed % 4 === 0 && ch.closers.length) parts.push(pick(ch.closers, seed))
 
   // Trim trailing colour until the reply is speakable. The first two parts —
   // the answer and its mechanism — are never dropped.

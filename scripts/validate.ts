@@ -1,4 +1,8 @@
+import { existsSync } from 'node:fs'
 import { firstDay } from '../src/content/episodes/firstDay'
+import { episodes, episodesForGroup, featuredEpisode } from '../src/content/episodes'
+import { characterGroups, groupCast } from '../src/content/characterGroups'
+import { resolveVoiceProfile, voiceProfiles } from '../src/voice/voiceProfiles'
 import { knowledgeBase, knowledgeById, concepts } from '../src/content/knowledge'
 import { characters } from '../src/content/characters'
 import { askCharacter } from '../src/ai/characterAgent'
@@ -75,6 +79,60 @@ for (const v of gate.variants!) {
 }
 console.log(`adaptive variants selectable: ${gate.variants!.length}/3`)
 
+/* --------------------------------------------------------- roster + assets */
+section('ROSTER, VOICES AND ARTWORK')
+
+const rosterIds = characterGroups.flatMap(g => g.characterIds)
+ok(new Set(rosterIds).size === rosterIds.length, 'a character appears in two groups')
+ok(characterGroups.length >= 4, `expected at least 4 groups, got ${characterGroups.length}`)
+
+for (const g of characterGroups) {
+  ok(g.characterIds.length === 4, `${g.id} should field 4 characters, has ${g.characterIds.length}`)
+  ok(groupCast(g).length === g.characterIds.length, `${g.id} references a character that does not exist`)
+  for (const id of g.characterIds) ok(characters[id]?.groupId === g.id, `${id} is listed in ${g.id} but says it belongs to ${characters[id]?.groupId}`)
+}
+
+/* Every character resolves to a real voice, and no voice id is a secret. */
+for (const ch of Object.values(characters)) {
+  ok(ch.voiceProfileId in voiceProfiles, `${ch.id} points at missing voice profile "${ch.voiceProfileId}"`)
+  const vp = resolveVoiceProfile(ch.voiceProfileId)
+  ok(!!vp.voiceId, `${ch.id} voice profile has no cast voice id`)
+  if (ch.id !== 'you') {
+    // Cast voices are community voices (Creator tier and up), so every roster
+    // character needs a premade stand-in or it goes silent on a Free key. The
+    // narrator profile is exempt: its cast voice is already premade.
+    ok(!!vp.fallbackVoiceId, `${ch.id} has no premade fallback — it would break on a Free key`)
+    ok(vp.voiceId !== vp.fallbackVoiceId, `${ch.id} cast voice and fallback are the same id`)
+    ok(ch.greetings.length > 0, `${ch.id} has no greeting (used for the voice preview)`)
+    ok(!!ch.refusal, `${ch.id} has no refusal line`)
+    ok(!!ch.avatar?.src, `${ch.id} has no avatar`)
+    ok(existsSync('public' + ch.avatar!.src), `${ch.id} avatar missing on disk: public${ch.avatar!.src}`)
+  }
+}
+for (const vp of Object.values(voiceProfiles)) {
+  ok(!/^sk_/.test(vp.voiceId), `voice profile ${vp.id} looks like it holds an API key`)
+}
+console.log(`${Object.keys(characters).length - 1} characters · ${characterGroups.length} groups · ${Object.keys(voiceProfiles).length} voice profiles`)
+
+/* Episodes are grouped, imaged and cast from their own group. */
+ok(new Set(episodes.map(e => e.id)).size === episodes.length, 'duplicate episode ids')
+for (const ep of episodes) {
+  ok(characterGroups.some(g => g.id === ep.groupId), `${ep.id} has unknown groupId ${ep.groupId}`)
+  ok(!!ep.image?.src, `${ep.id} has no episode image`)
+  ok(existsSync('public' + ep.image!.src), `${ep.id} image missing on disk: public${ep.image!.src}`)
+  for (const id of ep.cast) {
+    ok(!!characters[id], `${ep.id} casts unknown character ${id}`)
+    ok(characters[id]?.groupId === ep.groupId, `${ep.id} casts ${id} from another group`)
+  }
+  ok(ep.locked || !!ep.scenes[ep.entrySceneId], `${ep.id} is unlocked but has no entry scene`)
+}
+for (const g of characterGroups) {
+  const shelf = episodesForGroup(g.id)
+  ok(shelf.length > 0, `${g.id} has no episodes on its shelf`)
+  ok(!!featuredEpisode(g.id), `${g.id} has nothing to feature in the hero`)
+}
+console.log(`${episodes.length} episodes across ${characterGroups.length} groups · every title has an image`)
+
 /* ------------------------------------------------------------ knowledge */
 section('KNOWLEDGE BASE')
 ok(new Set(knowledgeBase.map(k => k.id)).size === knowledgeBase.length, 'duplicate knowledge ids')
@@ -122,14 +180,14 @@ const ctx = {
   lastChoiceQuality: 'best' as const,
 }
 const qs = [
-  ['vera', 'Why was the email suspicious?'],
-  ['vera', 'But the sender looked like my manager. Why would it be phishing?'],
-  ['dex', 'Can I just share my login once?'],
-  ['milo', 'What should I do if I already clicked it?'],
-  ['noor', 'Is it ok to paste customer data into an external AI tool?'],
-  ['vera', 'What do you think about the new espresso machine on floor two?'],
-  ['milo', 'hey'],
-  ['vera', 'What should I have done?'],
+  ['summer', 'Why was the email suspicious?'],
+  ['summer', 'But the sender looked like my manager. Why would it be phishing?'],
+  ['rick', 'Can I just share my login once?'],
+  ['morty', 'What should I do if I already clicked it?'],
+  ['jerry', 'Is it ok to paste customer data into an external AI tool?'],
+  ['summer', 'What do you think about the new espresso machine on floor two?'],
+  ['morty', 'hey'],
+  ['summer', 'What should I have done?'],
 ]
 for (const [id, q] of qs) {
   const r = await askCharacter({ characterId: id, question: q, ctx, history: [] })
@@ -142,12 +200,12 @@ for (const [id, q] of qs) {
   ok(!/\bundefined\b|NaN|\[object/.test(r.text), `malformed reply: ${r.text}`)
   ok(!/\.\s*\./.test(r.text), `double punctuation: ${r.text}`)
 }
-const offTopic = await askCharacter({ characterId: 'vera', question: 'What do you think about the new espresso machine on floor two?', ctx, history: [] })
+const offTopic = await askCharacter({ characterId: 'summer', question: 'What do you think about the new espresso machine on floor two?', ctx, history: [] })
 ok(offTopic.grounded === false && offTopic.citations.length === 0, 'off-topic question should be declined, not answered')
 
 /* determinism */
-const a1 = await askCharacter({ characterId: 'vera', question: 'Why report it at all?', ctx, history: [] })
-const a2 = await askCharacter({ characterId: 'vera', question: 'Why report it at all?', ctx, history: [] })
+const a1 = await askCharacter({ characterId: 'summer', question: 'Why report it at all?', ctx, history: [] })
+const a2 = await askCharacter({ characterId: 'summer', question: 'Why report it at all?', ctx, history: [] })
 ok(a1.text === a2.text, 'offline composer should be deterministic')
 
 /* ------------------------------------------------------------- mechanics */
