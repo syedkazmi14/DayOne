@@ -160,7 +160,7 @@ export function Results() {
               {[0, 1, 2].map((i) => (
                 <motion.div
                   key={i}
-                  className="h-3 rail"
+                  className="h-3 rounded rail"
                   style={{ width: `${88 - i * 14}%` }}
                   animate={{ opacity: [0.25, 0.6, 0.25] }}
                   transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.18 }}

@@ -301,7 +301,7 @@ export function Authoring() {
           {extracted.length > 0 && (
             <div className="mt-6 grid gap-1.5 lg:grid-cols-2">
               {extracted.map((k) => (
-                <div key={k.id} className="flex items-center gap-2 border border-bone/8 bg-ink-900/30 px-3 py-2">
+                <div key={k.id} className="flex items-center gap-2 rounded border border-bone/8 bg-ink-900/30 px-3 py-2">
                   <span className="font-mono text-[9px] tracking-[0.12em] text-signal">{k.id}</span>
                   <span className="min-w-0 flex-1 truncate font-sans text-[12px] font-light text-bone">{k.topic}</span>
                   <Chip tone={k.severity === 'critical' ? 'danger' : k.severity === 'high' ? 'signal' : 'neutral'}>{k.severity}</Chip>
@@ -329,7 +329,7 @@ export function Authoring() {
                     setTopic(t)
                     resetEpisode()
                   }}
-                  className={`flex flex-col items-start border px-4 py-3 text-left transition-colors ${
+                  className={`flex flex-col items-start rounded border px-4 py-3 text-left transition-colors ${
                     on ? 'border-signal/70 bg-signal/[0.07]' : 'border-bone/12 hover:border-bone/35'
                   }`}
                 >
@@ -348,7 +348,7 @@ export function Authoring() {
               setTopic(customTopic(custom))
               resetEpisode()
             }}
-            className="mt-3 flex max-w-md items-center gap-2 border border-bone/15 px-3 focus-within:border-signal/50"
+            className="mt-3 flex max-w-md items-center gap-2 rounded border border-bone/15 px-3 focus-within:border-signal/50"
           >
             <input
               value={custom}

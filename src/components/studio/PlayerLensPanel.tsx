@@ -36,8 +36,8 @@ export function PlayerLensPanel({ episode }: { episode: Episode }) {
                       <span className={`w-[120px] shrink-0 font-mono text-[9.5px] uppercase tracking-wide ${on ? 'text-cyan' : 'text-bone-faint'}`}>
                         {conceptLabel(v.conceptFocus)}
                       </span>
-                      <span className="block h-[3px] flex-1 overflow-hidden rail">
-                        <span className={`block h-full ${on ? 'bg-cyan' : 'bg-bone/30'}`} style={{ width: `${score * 100}%` }} />
+                      <span className="block h-[3px] flex-1 overflow-hidden rounded rail">
+                        <span className={`block h-full rounded ${on ? 'bg-cyan' : 'bg-bone/30'}`} style={{ width: `${score * 100}%` }} />
                       </span>
                       <span className="w-7 text-right font-mono text-[10px] tabular-nums text-bone-dim">{Math.round(score * 100)}</span>
                     </div>

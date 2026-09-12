@@ -248,15 +248,15 @@ export function ScenePlayer() {
               <p className="mt-5 font-sans text-[15px] font-light leading-relaxed text-bone-dim">
                 {state.adaptation.rationale}
               </p>
-              <div className="mt-6 inline-flex items-center gap-3 border border-cyan/30 px-4 py-2">
+              <div className="mt-6 inline-flex items-center gap-3 rounded border border-cyan/30 px-4 py-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-cyan">focus</span>
                 <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-bone">
                   {conceptLabel(state.adaptation.focus)}
                 </span>
               </div>
-              <div className="mt-8 h-[2px] w-full overflow-hidden rail">
+              <div className="mt-8 h-[2px] w-full overflow-hidden rounded rail">
                 <motion.div
-                  className="h-full bg-cyan"
+                  className="h-full rounded bg-cyan"
                   initial={{ width: 0 }}
                   animate={{ width: '100%' }}
                   transition={{ duration: 2.7, ease: 'linear' }}

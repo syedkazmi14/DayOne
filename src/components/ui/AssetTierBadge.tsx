@@ -18,7 +18,7 @@ export function AssetTierBadge({ assets, className = '' }: { assets?: SceneAsset
   return (
     <span
       data-visual-tier={tier}
-      className={`inline-flex max-w-full items-center gap-1.5 border bg-ink-900/50 px-2 py-[3px] font-mono text-[8.5px] uppercase tracking-[0.14em] backdrop-blur ${look.tone} ${className}`}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded border bg-ink-900/50 px-2 py-[3px] font-mono text-[8.5px] uppercase tracking-[0.14em] backdrop-blur ${look.tone} ${className}`}
     >
       <look.Icon size={10} className="shrink-0" />
       <span className="truncate">{look.label}</span>

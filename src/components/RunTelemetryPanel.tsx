@@ -24,8 +24,8 @@ function RateBar({ label, stat, accent }: { label: string; stat: RateStat; accen
           {pct(stat.rate)}
         </span>
       </div>
-      <div className="h-[4px] overflow-hidden rail">
-        <div className="h-full" style={{ width: `${Math.max(2, stat.rate * 100)}%`, background: accent }} />
+      <div className="h-[4px] overflow-hidden rounded rail">
+        <div className="h-full rounded" style={{ width: `${Math.max(2, stat.rate * 100)}%`, background: accent }} />
       </div>
       <div className="mt-1 font-mono text-[9px] text-bone-faint">
         {stat.correct}/{stat.total} strong call{stat.total === 1 ? '' : 's'}

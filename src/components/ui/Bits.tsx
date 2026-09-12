@@ -33,7 +33,7 @@ export function Chip({
   }
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.07em] ${tones[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.07em] ${tones[tone]} ${className}`}
     >
       {children}
     </span>
@@ -58,7 +58,7 @@ export function Btn({
   size?: 'md' | 'sm'
 }) {
   const sizes = { md: 'px-6 py-3 text-[13.5px]', sm: 'px-4 py-2 text-[13px]' }
-  const base = `group relative inline-flex items-center justify-center gap-2 font-sans font-medium transition-colors duration-200 disabled:opacity-35 disabled:pointer-events-none ${sizes[size]}`
+  const base = `group relative inline-flex items-center justify-center gap-2 rounded font-sans font-medium transition-colors duration-200 disabled:opacity-35 disabled:pointer-events-none ${sizes[size]}`
   const variants = {
     primary: 'bg-signal text-ink-900 hover:bg-signal-hot',
     outline: 'border border-bone/15 text-bone-dim hover:border-bone/35 hover:text-bone',
@@ -100,9 +100,9 @@ export function Meter({
           {pct}%
         </span>
       </div>
-      <div className="relative h-[3px] w-full rail overflow-hidden">
+      <div className="relative h-[3px] w-full rail overflow-hidden rounded">
         <motion.div
-          className="absolute inset-y-0 left-0"
+          className="absolute inset-y-0 left-0 rounded"
           style={{ background: accent, boxShadow: `0 0 12px ${accent}66` }}
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}

@@ -43,7 +43,7 @@ export function RiskTerminal({
       >
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <h3 className="t-display text-4xl text-bone sm:text-5xl">MAKE YOUR CALL</h3>
-          <span className="inline-flex items-center gap-2 border border-signal/30 px-3 py-1.5 font-mono text-sm tabular-nums text-signal">
+          <span className="inline-flex items-center gap-2 rounded border border-signal/30 px-3 py-1.5 font-mono text-sm tabular-nums text-signal">
             <Coins size={13} />
             {credits.toLocaleString()}
           </span>
@@ -69,8 +69,8 @@ export function RiskTerminal({
                 <span className="font-sans text-[34px] font-black leading-none tabular-nums sm:text-[46px]" style={{ color: accent }}>
                   {o.multiplier}×
                 </span>
-                <span className="block h-[3px] w-3/4 overflow-hidden rail">
-                  <span className="block h-full" style={{ width: `${Math.max(4, share * 100)}%`, background: accent }} />
+                <span className="block h-[3px] w-3/4 overflow-hidden rounded rail">
+                  <span className="block h-full rounded" style={{ width: `${Math.max(4, share * 100)}%`, background: accent }} />
                 </span>
                 <span className="font-mono text-[10px] tabular-nums text-bone-faint">−{o.stake.toLocaleString()}</span>
               </motion.button>

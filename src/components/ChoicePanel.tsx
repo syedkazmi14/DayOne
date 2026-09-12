@@ -38,7 +38,7 @@ export function ChoicePanel({
             <span className="h-px w-10 bg-signal" />
             <span className="t-eyebrow text-signal">decision point</span>
             {wager && (
-              <span className="ml-auto inline-flex items-center gap-2 border border-signal/40 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-signal">
+              <span className="ml-auto inline-flex items-center gap-2 rounded border border-signal/40 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-signal">
                 <Coins size={11} />
                 {wager.tier} · {wager.stake} staked
               </span>

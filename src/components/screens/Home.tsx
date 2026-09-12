@@ -90,13 +90,13 @@ export function Home() {
               {featured && playable ? (
                 <button
                   onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: featured.id })}
-                  className="inline-flex items-center gap-2.5 bg-signal px-7 py-3.5 font-sans text-[14px] font-medium text-ink-900 transition-colors duration-200 hover:bg-signal-hot"
+                  className="inline-flex items-center gap-2.5 rounded bg-signal px-7 py-3.5 font-sans text-[14px] font-medium text-ink-900 transition-colors duration-200 hover:bg-signal-hot"
                 >
                   <Play size={14} fill="currentColor" />
                   {state.player.completedEpisodes.includes(featured.id) ? 'Replay episode' : 'Start episode'}
                 </button>
               ) : (
-                <span className="inline-flex items-center gap-2.5 border border-bone/15 px-7 py-3.5 font-sans text-[14px] text-bone-faint">
+                <span className="inline-flex items-center gap-2.5 rounded border border-bone/15 px-7 py-3.5 font-sans text-[14px] text-bone-faint">
                   <Lock size={13} />
                   Episode in authoring
                 </span>
@@ -128,7 +128,7 @@ export function Home() {
                 <button
                   key={ep.id}
                   onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: ep.id })}
-                  className="group relative flex h-[230px] flex-col items-stretch overflow-hidden border border-cyan/25 text-left transition-all duration-500 hover:border-cyan/60"
+                  className="group relative flex h-[230px] flex-col items-stretch overflow-hidden rounded border border-cyan/25 text-left transition-all duration-500 hover:border-cyan/60"
                 >
                   <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-[1.04]">
                     <EpisodeStill episode={ep} sceneKey={`gen-${ep.id}`} paused />
@@ -171,7 +171,7 @@ export function Home() {
                 transition={{ delay: 0.06 + i * 0.07, duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
                 disabled={ep.locked}
                 onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: ep.id })}
-                className={`group relative h-[280px] overflow-hidden border text-left transition-colors duration-300 ${
+                className={`group relative h-[280px] overflow-hidden rounded border text-left transition-colors duration-300 ${
                   ep.locked ? 'cursor-not-allowed border-bone/8' : 'border-bone/10 hover:border-signal/45'
                 }`}
               >

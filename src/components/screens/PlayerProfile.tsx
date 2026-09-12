@@ -87,7 +87,7 @@ export function PlayerProfile() {
           {showcase && (
             <div className="w-[152px]">
               <div className="font-sans text-[12.5px] text-bone-faint">Showcase</div>
-              <div className="relative mt-2 aspect-[4/5] overflow-hidden border border-bone/10">
+              <div className="relative mt-2 aspect-[4/5] overflow-hidden rounded border border-bone/10">
                 <CollectibleArt item={showcase} />
               </div>
               <div className="mt-2 font-sans text-[14px] font-medium text-bone">{showcase.name}</div>
@@ -98,9 +98,9 @@ export function PlayerProfile() {
 
         {/* level rail — the only progress bar on the page */}
         <div className="mt-8 max-w-md">
-          <div className="h-[2px] w-full overflow-hidden bg-bone/12">
+          <div className="h-[2px] w-full overflow-hidden rounded bg-bone/12">
             <motion.div
-              className="h-full bg-signal"
+              className="h-full rounded bg-signal"
               initial={{ width: 0 }}
               animate={{ width: `${levelProgress(p.xp) * 100}%` }}
               transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}

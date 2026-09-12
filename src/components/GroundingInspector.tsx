@@ -38,7 +38,7 @@ export function GroundingInspector({
           <>
             <div className="flex flex-wrap items-center gap-1.5">
               <span
-                className={`inline-flex items-center gap-1.5 border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.14em] ${
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.14em] ${
                   g.status === 'grounded'
                     ? 'border-good/40 text-good'
                     : g.status === 'refused'
@@ -49,10 +49,10 @@ export function GroundingInspector({
                 {g.status === 'grounded' ? <ShieldCheck size={11} /> : g.status === 'refused' ? <ShieldAlert size={11} /> : <MessageCircle size={11} />}
                 {g.status === 'grounded' ? 'GROUNDED' : g.status === 'refused' ? `REFUSED · ${REASON[g.reason!]}` : 'SOCIAL · NO POLICY'}
               </span>
-              <span className="border border-bone/12 px-2 py-[3px] font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint">
+              <span className="rounded border border-bone/12 px-2 py-[3px] font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint">
                 intent · {g.intent}
               </span>
-              <span className="border border-bone/12 px-2 py-[3px] font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint">
+              <span className="rounded border border-bone/12 px-2 py-[3px] font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint">
                 {reply!.source === 'llm' ? 'model wrote reply' : g.gatedBeforeModel ? 'model not called' : 'local composer'}
               </span>
             </div>
@@ -60,9 +60,9 @@ export function GroundingInspector({
 
             {g.status !== 'social' && (
               <div className="mt-3">
-                <div className="relative h-[6px] overflow-visible rail">
+                <div className="relative h-[6px] overflow-visible rounded rail">
                   <div
-                    className={`h-full ${g.status === 'grounded' ? 'bg-good' : 'bg-danger'}`}
+                    className={`h-full rounded ${g.status === 'grounded' ? 'bg-good' : 'bg-danger'}`}
                     style={{ width: `${Math.max(1, g.confidence * 100)}%` }}
                   />
                   <div className="absolute -top-1 h-[14px] w-px bg-bone" style={{ left: `${g.floor * 100}%` }} />
@@ -92,8 +92,8 @@ export function GroundingInspector({
                   <div className="flex items-center gap-2 font-mono text-[10px]">
                     <span className="text-signal">{h.item.id}</span>
                     <span className="min-w-0 flex-1 truncate text-bone-dim">{h.item.topic}</span>
-                    <span className="block h-[3px] w-14 shrink-0 overflow-hidden rail">
-                      <span className="block h-full bg-cyan" style={{ width: `${h.relevance * 100}%` }} />
+                    <span className="block h-[3px] w-14 shrink-0 overflow-hidden rounded rail">
+                      <span className="block h-full rounded bg-cyan" style={{ width: `${h.relevance * 100}%` }} />
                     </span>
                     <span className="w-8 shrink-0 text-right tabular-nums text-bone-faint">{h.relevance.toFixed(2)}</span>
                     {used && <span className="shrink-0 uppercase tracking-[0.12em] text-good">used</span>}

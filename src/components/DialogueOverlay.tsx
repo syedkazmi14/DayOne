@@ -113,7 +113,7 @@ export function DialogueOverlay({
               <motion.div
                 animate={speaking ? { y: [0, -3, 0] } : { y: 0 }}
                 transition={speaking ? { duration: 1.8, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.3 }}
-                className="relative border"
+                className="relative overflow-hidden rounded border"
                 style={{ borderColor: `${ch.accent}55`, boxShadow: `0 30px 80px -30px ${ch.accent}99` }}
               >
                 <CharacterAvatar character={ch} size={164} ratio={1.18} priority />

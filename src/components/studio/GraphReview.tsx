@@ -95,7 +95,7 @@ function SceneRow({ episode, scene: s }: { episode: Episode; scene: Scene }) {
   const isGate = !!s.variants?.length
 
   return (
-    <div className="border border-bone/8 bg-ink-900/30">
+    <div className="rounded border border-bone/8 bg-ink-900/30">
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left">
         {isGate ? <GitBranch size={12} className="shrink-0 text-cyan" /> : null}
         <Chip tone={s.outcome ? OUTCOME_TONE[s.outcome.tone] : KIND_TONE[s.kind]}>{isGate ? 'adaptive' : s.kind}</Chip>
@@ -147,7 +147,7 @@ function SceneRow({ episode, scene: s }: { episode: Episode; scene: Scene }) {
           {s.choices && (
             <div className="space-y-1.5">
               {s.choices.map((c) => (
-                <div key={c.id} className="flex flex-wrap items-center gap-2 border border-bone/10 px-2.5 py-2">
+                <div key={c.id} className="flex flex-wrap items-center gap-2 rounded border border-bone/10 px-2.5 py-2">
                   <span className="font-mono text-[11px] text-bone-dim">{c.label}</span>
                   <span className="min-w-0 flex-1 font-sans text-[12.5px] font-light text-bone">{c.text}</span>
                   <Chip tone={QUALITY_TONE[c.quality]}>{c.quality}</Chip>

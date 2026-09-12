@@ -77,7 +77,7 @@ export function ConsequencePanel({
               <Coins size={12} />
               {verdictHeadline(wager.won ? 'win' : wager.payout > 0 ? 'push' : 'loss')}
             </span>
-            <span className="border border-bone/15 px-2 py-[2px] font-mono text-[10px] uppercase tracking-[0.14em] text-bone-dim">
+            <span className="rounded border border-bone/15 px-2 py-[2px] font-mono text-[10px] uppercase tracking-[0.14em] text-bone-dim">
               {TIER_LABEL[wager.tier]} {wager.multiplier}×
             </span>
             <span
@@ -122,7 +122,7 @@ export function ConsequencePanel({
                 <button
                   key={id}
                   onClick={() => setOpenCite(open ? null : id)}
-                  className={`border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                  className={`rounded border px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.14em] transition-colors ${
                     open ? 'border-signal/60 text-signal' : 'border-bone/15 text-bone-faint hover:border-bone/35 hover:text-bone-dim'
                   }`}
                 >
@@ -172,7 +172,7 @@ export function ConsequencePanel({
                 <button
                   key={id}
                   onClick={() => onTalk(id)}
-                  className="group inline-flex items-center gap-2.5 border px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] transition-all duration-300"
+                  className="group inline-flex items-center gap-2.5 rounded border px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] transition-all duration-300"
                   style={{ borderColor: `${ch.accent}44`, color: ch.accent }}
                 >
                   <MessageSquare size={12} />

@@ -21,7 +21,7 @@ export function Step({
     <section className={`mt-14 transition-opacity duration-500 ${state === 'locked' ? 'opacity-40' : ''}`}>
       <div className="flex items-start gap-4">
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center border font-mono text-[11px] ${
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border font-mono text-[11px] ${
             state === 'done' ? 'border-good/50 text-good' : state === 'active' ? 'border-signal/60 text-signal' : 'border-bone/15 text-bone-faint'
           }`}
         >
@@ -80,7 +80,7 @@ export function Pipeline() {
         {NODES.map((n, i) => (
           <div key={n.label} className="flex items-center gap-2">
             <div
-              className="border px-3 py-2.5 font-mono text-[9.5px] uppercase tracking-[0.16em]"
+              className="rounded border px-3 py-2.5 font-mono text-[9.5px] uppercase tracking-[0.16em]"
               style={{ borderColor: `${COLORS[n.kind]}55`, color: COLORS[n.kind] }}
             >
               {n.label}
@@ -100,7 +100,7 @@ export function Pipeline() {
           <div key={b.label} className="flex flex-col items-center">
             <span className={`block h-4 w-px ${b.ai ? 'bg-cyan/40' : 'bg-bone/20'}`} />
             <div
-              className={`whitespace-nowrap border px-3 py-2 font-mono text-[9px] uppercase tracking-[0.14em] ${
+              className={`whitespace-nowrap rounded border px-3 py-2 font-mono text-[9px] uppercase tracking-[0.14em] ${
                 b.ai ? 'border-cyan/40 text-cyan' : 'border-bone/20 text-bone-dim'
               }`}
             >

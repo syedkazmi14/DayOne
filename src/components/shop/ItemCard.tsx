@@ -30,7 +30,7 @@ function CardShell({
   actions?: ReactNode
 }) {
   return (
-    <article className="flex h-full flex-col border border-bone/10 bg-ink-850 transition-colors duration-300 hover:border-bone/20">
+    <article className="flex h-full flex-col overflow-hidden rounded border border-bone/10 bg-ink-850 transition-colors duration-300 hover:border-bone/20">
       <div className={`relative overflow-hidden ${tall ? 'aspect-[4/5]' : 'aspect-[4/3]'}`}>{preview}</div>
       <div className="flex flex-1 flex-col border-t border-bone/8 p-4">
         <div className="flex items-start justify-between gap-3">

@@ -127,7 +127,7 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
       }}
       /* dark scrim: the hero still behind this can be any brightness, and the
        * portrait labels over show artwork are otherwise unreadable. */
-      className={`w-fit border border-bone/10 bg-ink-900/70 p-3 backdrop-blur-md ${className}`}
+      className={`w-fit rounded border border-bone/10 bg-ink-900/70 p-3 backdrop-blur-md ${className}`}
     >
       {/* group name + switcher */}
       <div className="mb-2.5 flex items-center gap-1">
@@ -175,7 +175,7 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
               className="group/card text-center"
             >
               <span
-                className={`relative block overflow-hidden transition-opacity duration-300 ${
+                className={`relative block overflow-hidden rounded transition-opacity duration-300 ${
                   selected ? 'opacity-100' : 'opacity-75 group-hover/card:opacity-95'
                 }`}
                 style={{

@@ -51,7 +51,7 @@ export function PurchaseDialog({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 6 }}
         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-        className="relative w-full max-w-[380px] border border-bone/12 bg-ink-800"
+        className="relative w-full max-w-[380px] overflow-hidden rounded border border-bone/12 bg-ink-800"
       >
         <div className={`relative overflow-hidden ${item.type === 'character' ? 'aspect-[4/3]' : 'aspect-[16/10]'}`}>
           <ItemPreview item={item} playerName={playerName} large />

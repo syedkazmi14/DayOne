@@ -73,8 +73,8 @@ async function pool<T>(items: T[], size: number, work: (item: T) => Promise<void
 function AssetRow({ episode, item, row, now, detail }: { episode: Episode; item: AssetPlanItem; row?: Row; now: number; detail?: string }) {
   const scene = episode.scenes[item.sceneId]
   return (
-    <div className="flex items-center gap-3 border border-bone/8 bg-ink-900/30 p-2.5" data-asset-row={item.key}>
-      <div className="relative aspect-video w-28 shrink-0 overflow-hidden border border-bone/10 sm:w-40">
+    <div className="flex items-center gap-3 rounded border border-bone/8 bg-ink-900/30 p-2.5" data-asset-row={item.key}>
+      <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded border border-bone/10 sm:w-40">
         <SceneCanvas shot={scene.shot} sceneKey={`thumb-${item.key}`} paused assets={item.kind === 'image' ? { background: scene.assets?.background } : scene.assets} />
       </div>
       <div className="min-w-0 flex-1">
@@ -302,7 +302,7 @@ export function VoiceAssets({ episode, onChange }: { episode: Episode; onChange:
         {byCharacter.map(([id, n]) => {
           const ch = getCharacter(id)
           return (
-            <div key={id} className="flex items-center gap-3 border border-bone/8 bg-ink-900/30 px-3 py-2">
+            <div key={id} className="flex items-center gap-3 rounded border border-bone/8 bg-ink-900/30 px-3 py-2">
               <span className="h-[12px] w-[2px]" style={{ background: ch.accent }} />
               <span className="font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: ch.accent }}>
                 {ch.name}

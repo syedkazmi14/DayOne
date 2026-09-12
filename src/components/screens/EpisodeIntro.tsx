@@ -93,7 +93,7 @@ export function EpisodeIntro() {
               <div className="mt-9">
                 <button
                   onClick={() => dispatch({ type: 'START_EPISODE' })}
-                  className="group inline-flex items-center gap-3 bg-signal px-10 py-4 font-mono text-[12px] uppercase tracking-ultra text-ink-900 transition-all duration-300 hover:bg-signal-hot hover:shadow-[0_0_60px_-12px_rgba(245,165,36,.8)]"
+                  className="group inline-flex items-center gap-3 rounded bg-signal px-10 py-4 font-mono text-[12px] uppercase tracking-ultra text-ink-900 transition-all duration-300 hover:bg-signal-hot hover:shadow-[0_0_60px_-12px_rgba(245,165,36,.8)]"
                 >
                   <Play size={14} fill="currentColor" />
                   start episode
@@ -122,7 +122,7 @@ export function EpisodeIntro() {
                       transition={{ delay: 0.35 + i * 0.09 }}
                       className="glass flex items-center gap-4 p-3"
                     >
-                      <CharacterAvatar character={ch} size={58} priority className="shrink-0 border border-bone/10" />
+                      <CharacterAvatar character={ch} size={58} priority className="shrink-0 rounded border border-bone/10" />
                       <div className="min-w-0">
                         <div className="font-sans text-[13px] font-bold uppercase tracking-[0.06em]" style={{ color: ch.accent }}>
                           {ch.name}

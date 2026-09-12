@@ -161,7 +161,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
           style={{ background: `radial-gradient(120% 140% at 82% 0%, ${ch.accent}, transparent 62%)` }}
         />
         <div className="relative flex items-start gap-4 px-5 py-4">
-          <CharacterAvatar character={ch} size={68} priority speaking={speaking} className="shrink-0 border border-bone/10" />
+          <CharacterAvatar character={ch} size={68} priority speaking={speaking} className="shrink-0 rounded border border-bone/10" />
           <div className="min-w-0 flex-1 pt-1">
             <div className="font-sans text-[17px] font-bold uppercase tracking-[0.05em]" style={{ color: ch.accent }}>
               {ch.name}
@@ -216,7 +216,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
         {turns.map((t) => (
           <div key={t.id} className={t.role === 'player' ? 'flex justify-end' : ''}>
             {t.role === 'player' ? (
-              <div className="max-w-[85%] border border-signal/25 bg-signal/[0.07] px-3.5 py-2.5">
+              <div className="max-w-[85%] rounded border border-signal/25 bg-signal/[0.07] px-3.5 py-2.5">
                 <div className="mb-1 flex items-center gap-2">
                   <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-signal/70">you</span>
                   {t.mode === 'voice' && <Mic size={9} className="text-signal/70" />}
@@ -241,7 +241,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
                         <span
                           key={id}
                           title={k ? `${k.rule}\n\n${k.source.doc} § ${k.source.section}` : id}
-                          className="cursor-help border border-bone/12 px-1.5 py-[2px] font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint"
+                          className="cursor-help rounded border border-bone/12 px-1.5 py-[2px] font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint"
                         >
                           {id}
                         </span>
@@ -315,7 +315,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
             <button
               key={m}
               onClick={() => setMode(m)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
+              className={`flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
                 mode === m ? 'bg-bone/10 text-bone' : 'text-bone-faint hover:text-bone-dim'
               }`}
             >
@@ -344,7 +344,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
                     key={s}
                     onClick={() => void send(s, false)}
                     disabled={busy}
-                    className="border border-bone/12 px-2.5 py-1.5 text-left font-sans text-[11.5px] font-light leading-snug text-bone-dim transition-colors hover:border-signal/40 hover:text-bone disabled:opacity-40"
+                    className="rounded border border-bone/12 px-2.5 py-1.5 text-left font-sans text-[11.5px] font-light leading-snug text-bone-dim transition-colors hover:border-signal/40 hover:text-bone disabled:opacity-40"
                   >
                     {s}
                   </button>
@@ -356,7 +356,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
                 e.preventDefault()
                 void send(input, false)
               }}
-              className="flex items-center gap-2 border border-bone/15 px-3 focus-within:border-signal/50"
+              className="flex items-center gap-2 rounded border border-bone/15 px-3 focus-within:border-signal/50"
             >
               <input
                 value={input}
@@ -384,7 +384,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
             </div>
 
             {/* waveform */}
-            <div className="mb-4 flex h-[54px] items-center justify-center gap-[2px] border border-bone/10 bg-ink-900/50 px-3">
+            <div className="mb-4 flex h-[54px] items-center justify-center gap-[2px] rounded border border-bone/10 bg-ink-900/50 px-3">
               {levels.map((l, i) => (
                 <span
                   key={i}
@@ -407,7 +407,7 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
             <button
               onClick={() => void toggleRecording()}
               disabled={busy}
-              className={`flex w-full items-center justify-center gap-3 py-4 font-mono text-[11px] uppercase tracking-ultra transition-all duration-300 disabled:opacity-40 ${
+              className={`flex w-full items-center justify-center gap-3 rounded py-4 font-mono text-[11px] uppercase tracking-ultra transition-all duration-300 disabled:opacity-40 ${
                 recording ? 'bg-danger/15 text-danger' : 'bg-bone/[0.06] text-bone hover:bg-bone/10'
               }`}
               style={recording ? { boxShadow: 'inset 0 0 0 1px rgba(255,77,77,.4)' } : undefined}
