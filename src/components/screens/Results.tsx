@@ -75,7 +75,9 @@ export function Results() {
                 <Chip tone="good">{decisions.filter((d) => d.quality === 'best').length} strong</Chip>
                 <Chip tone="signal">{decisions.filter((d) => d.quality === 'acceptable').length} partial</Chip>
                 <Chip tone="danger">{decisions.filter((d) => d.quality === 'poor').length} costly</Chip>
-                <Chip tone="cyan">{state.questionsAsked} questions asked</Chip>
+                <Chip tone="cyan">
+                  {state.questionsAsked} question{state.questionsAsked === 1 ? '' : 's'} asked
+                </Chip>
                 {state.creditsDelta !== 0 && (
                   <Chip tone={state.creditsDelta > 0 ? 'good' : 'danger'}>
                     <Coins size={10} />

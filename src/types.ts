@@ -161,6 +161,8 @@ export interface Episode {
   concepts: ConceptId[]
   cast: string[]
   entrySceneId: string
+  /** Card art for episodes with no graph yet — keeps the shelf consistent. */
+  poster?: ShotSpec
   scenes: Record<string, Scene>
   /** Ordered act beats, used for the progress rail. */
   beats: { act: number; label: string }[]

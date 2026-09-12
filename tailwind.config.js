@@ -3,6 +3,10 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      // Tailwind's default opacity scale is in steps of 5, so modifiers like
+      // /12 and /94 are silently dropped — which had quietly removed several
+      // scrims and hairline borders. Allow every integer.
+      opacity: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [i, String(i / 100)])),
       colors: {
         ink: {
           900: '#050607',

@@ -1,4 +1,6 @@
-import type { Episode } from '@/types'
+import type { Episode, ShotSpec } from '@/types'
+
+const poster = (env: ShotSpec['env'], time: ShotSpec['time'], mood: ShotSpec['mood'], prompt: string): ShotSpec => ({ env, time, mood, prompt })
 import { firstDay } from './firstDay'
 
 /** Locked episodes are authored stubs — enough for the shelf, no graph yet. */
@@ -15,6 +17,7 @@ const theClient: Episode = {
   concepts: ['data_handling', 'approved_tools', 'incident_reporting'],
   cast: ['noor', 'vera', 'dex'],
   entrySceneId: '',
+  poster: poster('open_office', 'dusk', 'tense', 'Operations floor at dusk, escalation on every screen, a lead standing at a desk that is not hers.'),
   beats: [],
   scenes: {},
 }
@@ -32,6 +35,7 @@ const theDeadline: Episode = {
   concepts: ['incident_reporting', 'social_engineering', 'physical_security'],
   cast: ['dex', 'milo', 'vera'],
   entrySceneId: '',
+  poster: poster('night_office', 'night', 'tense', 'Nine hours to ship. One fluorescent tube, two people, a stairwell conversation nobody wants to have.'),
   beats: [],
   scenes: {},
 }

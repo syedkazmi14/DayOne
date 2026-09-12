@@ -95,7 +95,7 @@ export function Home() {
       </div>
 
       {/* episode shelf */}
-      <div className="px-6 pb-24 sm:px-12 lg:px-20">
+      <div className="px-6 pb-36 sm:px-12 lg:px-20">
         <div className="mb-6 flex items-baseline justify-between">
           <Eyebrow>season one · your training. your choices.</Eyebrow>
           <span className="font-mono text-[10px] text-bone-faint">
@@ -122,11 +122,14 @@ export function Home() {
               >
                 {/* card art */}
                 <div className={`absolute inset-0 transition-all duration-700 ${ep.locked ? 'grayscale' : 'group-hover:scale-[1.04]'}`}>
-                  {ep.entrySceneId ? (
-                    <SceneCanvas shot={ep.scenes[ep.entrySceneId].shot} sceneKey={`card-${ep.id}`} paused />
-                  ) : (
-                    <div className="h-full w-full bg-gradient-to-br from-ink-700 to-ink-900" />
-                  )}
+                  {(() => {
+                    const art = ep.entrySceneId ? ep.scenes[ep.entrySceneId]?.shot : ep.poster
+                    return art ? (
+                      <SceneCanvas shot={art} sceneKey={`card-${ep.id}`} paused />
+                    ) : (
+                      <div className="h-full w-full bg-gradient-to-br from-ink-700 to-ink-900" />
+                    )
+                  })()}
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/70 to-ink-900/20" />
 

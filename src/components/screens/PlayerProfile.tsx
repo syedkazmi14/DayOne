@@ -33,7 +33,7 @@ export function PlayerProfile() {
 
   return (
     <div className="relative h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl px-6 pb-28 pt-24 sm:px-10">
+      <div className="mx-auto max-w-5xl px-6 pb-36 pt-24 sm:px-10">
         <button
           onClick={() => dispatch({ type: 'GOTO', view: 'home' })}
           className="mb-8 flex items-center gap-2 font-mono text-[10px] uppercase tracking-ultra text-bone-dim transition-colors hover:text-bone"

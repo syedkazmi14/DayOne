@@ -24,18 +24,18 @@ interface Palette {
 }
 
 const PALETTES: Record<ShotSpec['time'], Palette> = {
-  morning: { skyTop: '#8FA6BA', skyBottom: '#2B3947', far: '#3C4B5B', mid: '#222C38', near: '#0B0F14', light: '#FFE7C8', glow: '#BFD6E8' },
-  midday: { skyTop: '#B3BDC6', skyBottom: '#3B434D', far: '#49525C', mid: '#2A313A', near: '#0C1015', light: '#FFFFFF', glow: '#DCE4EC' },
-  dusk: { skyTop: '#D08346', skyBottom: '#3A2028', far: '#5A3328', mid: '#2C1A1E', near: '#0D0A0C', light: '#FFB56B', glow: '#F2A15E' },
-  night: { skyTop: '#17222F', skyBottom: '#05070B', far: '#1B2634', mid: '#111822', near: '#05070A', light: '#8CC3E4', glow: '#4E7FA0' },
+  morning: { skyTop: '#5A7186', skyBottom: '#131C25', far: '#25323F', mid: '#141C25', near: '#06090C', light: '#FFE3BE', glow: '#9BBBD2' },
+  midday: { skyTop: '#76828E', skyBottom: '#1B222A', far: '#2E3741', mid: '#181E25', near: '#07090D', light: '#FFFFFF', glow: '#C2CED9' },
+  dusk: { skyTop: '#A85F2C', skyBottom: '#1E1116', far: '#3A2019', mid: '#1A0F12', near: '#080607', light: '#FF9E4D', glow: '#E08A3E' },
+  night: { skyTop: '#0E1720', skyBottom: '#030508', far: '#121A24', mid: '#0B1018', near: '#030507', light: '#7FB4D6', glow: '#3D6580' },
 }
 
 const GRADES: Record<ShotSpec['mood'], { color: string; opacity: number; blend: React.CSSProperties['mixBlendMode'] }> = {
-  neutral: { color: '#1A222C', opacity: 0.12, blend: 'multiply' },
-  warm: { color: '#F5A524', opacity: 0.14, blend: 'overlay' },
-  tense: { color: '#0E2530', opacity: 0.34, blend: 'multiply' },
+  neutral: { color: '#131A23', opacity: 0.26, blend: 'multiply' },
+  warm: { color: '#F5A524', opacity: 0.16, blend: 'overlay' },
+  tense: { color: '#0B1D26', opacity: 0.42, blend: 'multiply' },
   alarm: { color: '#FF2E2E', opacity: 0.2, blend: 'overlay' },
-  calm: { color: '#6FD3D8', opacity: 0.12, blend: 'soft-light' },
+  calm: { color: '#6FD3D8', opacity: 0.14, blend: 'soft-light' },
 }
 
 const rand = (seed: number) => {
@@ -279,8 +279,11 @@ function Rooftop(p: Palette) {
         )
       })}
       {/* the one lit floor */}
-      <rect x="560" y="300" width="300" height="46" fill="#F5A524" opacity="0.5" />
-      <ellipse cx="710" cy="323" rx="300" ry="80" fill="#F5A524" opacity="0.09" />
+      <g opacity="0.42">
+        <rect x="566" y="304" width="118" height="34" fill="#F5A524" opacity="0.5" />
+        <rect x="700" y="304" width="86" height="34" fill="#F5A524" opacity="0.38" />
+      </g>
+      <ellipse cx="690" cy="322" rx="250" ry="66" fill="#F5A524" opacity="0.06" />
       {/* street */}
       <rect x="0" y="812" width="1600" height="88" fill="#04060A" />
       <rect x="0" y="812" width="1600" height="10" fill={p.glow} opacity="0.2" />
@@ -398,7 +401,7 @@ export const SceneCanvas = memo(function SceneCanvas({
       )}
       <div
         className="pointer-events-none absolute inset-0"
-        style={{ background: 'linear-gradient(180deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 58%, rgba(0,0,0,.82) 100%)' }}
+        style={{ background: 'linear-gradient(180deg, rgba(0,0,0,.68) 0%, rgba(0,0,0,.12) 24%, rgba(0,0,0,.2) 52%, rgba(0,0,0,.92) 100%)' }}
       />
     </div>
   )

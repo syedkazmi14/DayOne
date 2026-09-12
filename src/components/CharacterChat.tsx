@@ -100,7 +100,9 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
 
       if (voiceOut || viaVoice) {
         setSpeaking(true)
-        setSubtitle(reply.text)
+        // Subtitles belong to the voice flow. In text mode the reply is already
+        // on screen, so a band repeating it verbatim is just noise.
+        if (viaVoice || mode === 'voice') setSubtitle(reply.text)
         const handle = await speak(reply.text, ch)
         await handle.done
         setSpeaking(false)
@@ -194,7 +196,6 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
               Ask {ch.name.split(' ')[0]} anything about this situation. They answer from the onboarding material — and
               say so when it does not cover your question.
             </p>
-            <div className="t-eyebrow pt-1">try</div>
           </div>
         )}
 

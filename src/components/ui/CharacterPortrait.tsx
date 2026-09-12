@@ -2,40 +2,72 @@ import { memo } from 'react'
 import type { Character } from '@/types'
 
 /* ============================================================================
- * Poster-style duotone character portraits, drawn as SVG.
+ * Poster-style character portraits, drawn as SVG.
  *
- * Deliberately graphic rather than illustrative: silhouettes, halftone and a
- * hard rim light. A customer swapping in licensed or self-recorded character
- * assets replaces this component's output, not the episode data.
+ * Deliberately graphic rather than illustrative — silhouette, a hard key light
+ * from one side, and a garment that carries most of the identity. Each build
+ * differs in head shape, hair outline AND neckline, so the four read as four
+ * people at 60px, not as four tinted copies of the same avatar.
+ *
+ * A customer swapping in licensed or self-recorded character assets replaces
+ * this component's output, not the episode data.
  * ========================================================================== */
 
 type Build = Character['portrait']['build']
 
-/** Head + shoulders paths per build, in a 200 x 230 frame. */
-const FIGURE: Record<Build, { head: string; hair?: string; body: string }> = {
+interface Figure {
+  /** Head and neck. */
+  head: string
+  /** Behind the head — long hair, drawn before the body. */
+  hairBack?: string
+  /** Over the head. */
+  hair: string
+  /** Shoulders and torso. */
+  body: string
+  /** Garment detail drawn over the body: collar, lapel, neckline. */
+  garment?: string
+  /** Stroked garment detail rather than filled. */
+  garmentStroke?: string
+}
+
+/* All paths live in a 200 x 230 frame, figure centred on x=100. */
+const FIGURE: Record<Build, Figure> = {
+  // DEX — angular jaw, spiky hair, open collar, shoulders thrown back.
   spiky: {
-    head: 'M100 42c19 0 32 15 32 34 0 13-3 22-8 29-4 5-10 9-16 10l-2 14h-12l-2-14c-6-1-12-5-16-10-5-7-8-16-8-29 0-19 13-34 32-34Z',
-    hair: 'M64 58c2-14 16-26 36-26 19 0 33 10 36 24l-8-9-5 8-7-9-6 9-6-10-7 10-6-7-6 9-8-8-7 9Z',
-    body: 'M100 128c22 0 40 14 47 34 4 12 6 25 7 38H46c1-13 3-26 7-38 7-20 25-34 47-34Z',
+    head: 'M100 44c19 0 31 14 31 33 0 10-2 18-5 25-3 7-9 13-16 15l1 15h-22l1-15c-7-2-13-8-16-15-3-7-5-15-5-25 0-19 12-33 31-33Z',
+    hair: 'M67 62c3-15 16-25 33-25s30 9 33 23l-7-8-4 9-7-9-5 10-7-10-6 11-6-9-6 10-8-8-6 9-4-3Z',
+    body: 'M100 132c-9 0-17 2-24 5l-6 3c-16 8-25 22-29 39-3 12-5 25-6 36h130c-1-11-3-24-6-36-4-17-13-31-29-39l-6-3c-7-3-15-5-24-5Z',
+    garmentStroke: 'M86 137 100 171 114 137M100 171v42',
   },
+  // MILO — round head, soft cap of hair, crew-neck knit, narrow shoulders.
   round: {
-    head: 'M100 40c21 0 35 16 35 36s-14 38-35 38-35-18-35-38 14-36 35-36Z',
-    hair: 'M65 62c0-20 15-33 35-33s35 13 35 33c-6-11-19-17-35-17s-29 6-35 17Z',
-    body: 'M100 124c20 0 36 13 43 32 4 12 6 26 7 40H50c1-14 3-28 7-40 7-19 23-32 43-32Z',
+    head: 'M100 40c20 0 33 16 33 35 0 13-3 23-9 30-4 5-9 9-14 10l1 14h-22l1-14c-5-1-10-5-14-10-6-7-9-17-9-30 0-19 13-35 33-35Z',
+    hair: 'M67 78c-1-6-1-11-1-16 0-21 15-34 34-34s34 13 34 34c0 5 0 10-1 16l-7-4c1-4 1-7 1-10-4-12-14-19-27-19s-23 7-27 19c0 3 0 6 1 10Z',
+    body: 'M100 128c-24 0-41 14-47 35-4 13-6 27-7 39h108c-1-12-3-26-7-39-6-21-23-35-47-35Z',
+    garmentStroke: 'M79 137q21 20 42 0',
   },
+  // NOOR — long hair falling past the shoulders, blazer with a notched lapel.
   long: {
-    head: 'M100 42c19 0 32 15 32 35 0 21-13 37-32 37s-32-16-32-37c0-20 13-35 32-35Z',
-    hair: 'M62 74c0-26 16-42 38-42s38 16 38 42c0 24 4 40 9 56l-18-6c3-14 4-28 2-40-4 10-14 16-31 16s-27-6-31-16c-2 12-1 26 2 40l-18 6c5-16 9-32 9-56Z',
-    body: 'M100 126c21 0 38 13 45 33 4 12 6 26 7 39H48c1-13 3-27 7-39 7-20 24-33 45-33Z',
+    hairBack: 'M60 80c0-27 18-44 40-44s40 17 40 44c0 30 5 52 12 74l-24-4c4-20 5-40 3-56-5 12-16 19-31 19s-26-7-31-19c-2 16-1 36 3 56l-24 4c7-22 12-44 12-74Z',
+    head: 'M100 44c18 0 30 14 30 33 0 12-3 22-8 29-4 5-9 8-15 9l1 15h-16l1-15c-6-1-11-4-15-9-5-7-8-17-8-29 0-19 12-33 30-33Z',
+    hair: 'M68 72c0-24 14-38 32-38s32 14 32 38c-4-14-15-22-32-22s-28 8-32 22Z',
+    body: 'M100 130c-25 0-43 14-49 36-4 13-6 26-7 38h112c-1-12-3-25-7-38-6-22-24-36-49-36Z',
+    garment: 'M88 133 100 168 74 204l-6-40c3-13 10-24 20-31Zm24 0c10 7 17 18 20 31l-6 40-26-36Z',
+    garmentStroke: 'M100 168v36',
   },
+  // VERA — cropped hair with a low bun, high-collar blazer, square shoulders.
   sharp: {
-    head: 'M100 44c18 0 30 14 30 33 0 22-12 38-30 38s-30-16-30-38c0-19 12-33 30-33Z',
-    hair: 'M68 66c0-22 14-36 32-36s32 14 32 36l-7-4c-3-12-12-19-25-19s-22 7-25 19l-7 4Z',
-    body: 'M100 124c8 0 15 2 21 6l-21 16-21-16c6-4 13-6 21-6Zm0 22 25-19c14 7 23 21 26 38 2 11 3 22 4 33H45c1-11 2-22 4-33 3-17 12-31 26-38l25 19Z',
+    head: 'M100 46c17 0 29 13 29 32 0 12-3 22-8 29-4 5-9 8-14 9l1 14h-16l1-14c-5-1-10-4-14-9-5-7-8-17-8-29 0-19 12-32 29-32Z',
+    hair: 'M71 70c0-22 13-35 29-35s29 13 29 35l-6-2c-3-13-11-20-23-20s-20 7-23 20l-6 2Zm58 6c9 1 14 7 14 14s-6 12-14 12Z',
+    body: 'M100 130c-27 0-46 15-52 38-3 13-5 25-6 36h116c-1-11-3-23-6-36-6-23-25-38-52-38Z',
+    garment: 'M90 132 100 160l-10 44-16-6 4-58c3-3 7-6 12-8Zm20 0c5 2 9 5 12 8l4 58-16 6-10-44Z',
+    garmentStroke: 'M100 160v44',
   },
+  // YOU — the protagonist. No features, broad shoulders, deliberately anonymous.
   wide: {
-    head: 'M100 44c19 0 33 15 33 34 0 21-14 37-33 37s-33-16-33-37c0-19 14-34 33-34Z',
-    body: 'M100 124c25 0 45 15 52 37 4 12 6 25 7 37H41c1-12 3-25 7-37 7-22 27-37 52-37Z',
+    head: 'M100 46c19 0 33 15 33 34 0 20-14 36-33 36s-33-16-33-36c0-19 14-34 33-34Z',
+    hair: '',
+    body: 'M100 130c-29 0-50 16-57 40-4 13-6 25-7 35h128c-1-10-3-22-7-35-7-24-28-40-57-40Z',
   },
 }
 
@@ -61,72 +93,83 @@ export const CharacterPortrait = memo(function CharacterPortrait({
   return (
     <div
       className={`relative ${className}`}
-      style={{ width: size, height: size * 1.15, transition: 'opacity .5s' , opacity: dim ? 0.4 : 1 }}
+      style={{ width: size, height: size * 1.15, opacity: dim ? 0.4 : 1, transition: 'opacity .5s' }}
     >
       <svg viewBox="0 0 200 230" className="h-full w-full drag-none" aria-label={character.name}>
         <defs>
-          <linearGradient id={`${uid}-fill`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor={hue} stopOpacity="0.95" />
-            <stop offset="55%" stopColor={hue2} stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#0A0B0E" stopOpacity="0.95" />
+          {/* Key light from the upper right, falling into near-black. */}
+          <linearGradient id={`${uid}-skin`} x1="1" y1="0" x2="0.1" y2="1">
+            <stop offset="0%" stopColor={hue} stopOpacity="1" />
+            <stop offset="52%" stopColor={hue2} stopOpacity="1" />
+            <stop offset="100%" stopColor="#070809" stopOpacity="1" />
           </linearGradient>
-          <linearGradient id={`${uid}-rim`} x1="1" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={hue} stopOpacity="0.9" />
-            <stop offset="40%" stopColor={hue} stopOpacity="0" />
+          <linearGradient id={`${uid}-cloth`} x1="1" y1="0" x2="0.2" y2="1">
+            <stop offset="0%" stopColor={hue2} stopOpacity="0.95" />
+            <stop offset="48%" stopColor="#11151B" stopOpacity="1" />
+            <stop offset="100%" stopColor="#06070A" stopOpacity="1" />
           </linearGradient>
-          <pattern id={`${uid}-dots`} width="5" height="5" patternUnits="userSpaceOnUse">
-            <circle cx="1.4" cy="1.4" r="1.1" fill="#000" opacity="0.34" />
-          </pattern>
           <radialGradient id={`${uid}-halo`}>
-            <stop offset="0%" stopColor={hue} stopOpacity="0.3" />
-            <stop offset="70%" stopColor={hue} stopOpacity="0.04" />
+            <stop offset="0%" stopColor={hue} stopOpacity="0.26" />
+            <stop offset="62%" stopColor={hue} stopOpacity="0.05" />
             <stop offset="100%" stopColor={hue} stopOpacity="0" />
           </radialGradient>
-          <clipPath id={`${uid}-clip`}>
+          {/* Rim light: a thin bright edge on the key side only. */}
+          <linearGradient id={`${uid}-rim`} x1="1" y1="0.2" x2="0.55" y2="0.8">
+            <stop offset="0%" stopColor={hue} stopOpacity="0.95" />
+            <stop offset="100%" stopColor={hue} stopOpacity="0" />
+          </linearGradient>
+          <clipPath id={`${uid}-figure`}>
             <path d={f.body} />
             <path d={f.head} />
-            {f.hair && <path d={f.hair} />}
           </clipPath>
         </defs>
 
-        <circle cx="100" cy="112" r="98" fill={`url(#${uid}-halo)`} />
+        <circle cx="100" cy="110" r="96" fill={`url(#${uid}-halo)`} />
 
-        {/* depth shadow */}
-        <g transform="translate(5 5)" opacity="0.5">
+        {/* cast shadow */}
+        <g transform="translate(6 6)" opacity="0.45">
+          {f.hairBack && <path d={f.hairBack} fill="#000" />}
           <path d={f.body} fill="#000" />
           <path d={f.head} fill="#000" />
         </g>
 
         <g
           style={{
-            transformOrigin: '100px 200px',
-            animation: speaking ? 'breathe 1.4s ease-in-out infinite' : undefined,
+            transformOrigin: '100px 214px',
+            animation: speaking ? 'breathe 1.5s ease-in-out infinite' : undefined,
           }}
         >
-          <path d={f.body} fill={`url(#${uid}-fill)`} />
-          <path d={f.head} fill={`url(#${uid}-fill)`} />
-          {f.hair && <path d={f.hair} fill={hue2} opacity="0.95" />}
+          {f.hairBack && <path d={f.hairBack} fill={hue2} opacity="0.55" />}
 
-          {/* halftone + rim light, clipped to the figure */}
-          <g clipPath={`url(#${uid}-clip)`}>
-            <rect x="0" y="0" width="200" height="230" fill={`url(#${uid}-dots)`} />
-            <rect x="0" y="0" width="200" height="230" fill={`url(#${uid}-rim)`} style={{ mixBlendMode: 'screen' }} />
+          <path d={f.body} fill={`url(#${uid}-cloth)`} />
+          {f.garment && <path d={f.garment} fill={hue2} opacity="0.32" />}
+          {f.garmentStroke && (
+            <path d={f.garmentStroke} fill="none" stroke={hue} strokeWidth="1.6" opacity="0.42" strokeLinecap="round" />
+          )}
+
+          <path d={f.head} fill={`url(#${uid}-skin)`} />
+          {f.hair && <path d={f.hair} fill={hue2} />}
+          {f.hair && <path d={f.hair} fill="#000" opacity="0.2" />}
+
+          {/* rim light along the lit edge, clipped to the figure */}
+          <g clipPath={`url(#${uid}-figure)`} style={{ mixBlendMode: 'screen' }}>
+            <rect x="0" y="0" width="200" height="230" fill={`url(#${uid}-rim)`} opacity="0.5" />
           </g>
 
-          <path d={f.head} fill="none" stroke={hue} strokeWidth="1.1" opacity="0.5" />
-          <path d={f.body} fill="none" stroke={hue} strokeWidth="1.1" opacity="0.35" />
+          <path d={f.head} fill="none" stroke={hue} strokeWidth="1" opacity="0.4" />
+          <path d={f.body} fill="none" stroke={hue} strokeWidth="1" opacity="0.22" />
         </g>
       </svg>
 
       {speaking && (
-        <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-end gap-[3px]">
+        <div className="absolute bottom-0 left-1/2 flex -translate-x-1/2 items-end gap-[3px]">
           {[0, 1, 2, 3, 4].map((i) => (
             <span
               key={i}
               className="w-[3px] rounded-full"
               style={{
                 background: hue,
-                height: 6 + ((i * 7) % 13),
+                height: 5 + ((i * 7) % 12),
                 animation: `breathe ${0.6 + i * 0.13}s ease-in-out infinite alternate`,
               }}
             />

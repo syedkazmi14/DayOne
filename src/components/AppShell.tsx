@@ -61,7 +61,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="h-full w-full">{children}</main>
 
       {!inScene && (
-        <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-wrap items-center gap-x-4 gap-y-1 px-6 py-3 sm:px-10">
+        <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-wrap items-center flex-nowrap gap-x-4 bg-gradient-to-t from-ink-900 via-ink-900/95 to-transparent px-6 pb-3 pt-8 sm:px-10">
           <span
             className={`font-mono text-[9px] uppercase tracking-[0.16em] ${
               llmMode() === 'offline' ? 'text-bone-faint' : 'text-good'
@@ -69,11 +69,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             llm · {llmLabel()}
           </span>
-          <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint">
+          <span className="hidden items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint sm:flex">
             <Mic size={9} />
             tts {voiceLabel(ttsTier())} · stt {voiceLabel(sttTier())}
           </span>
-          <span className="ml-auto font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint">
+          <span className="ml-auto hidden font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint sm:inline">
             prototype · original cast · virtual credits only
           </span>
         </footer>
