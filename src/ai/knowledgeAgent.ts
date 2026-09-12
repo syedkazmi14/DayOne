@@ -1,4 +1,5 @@
 import { knowledgeBase } from '@/content/knowledge'
+import { partitionValidItems, type ValidationError } from '@/content/validateKnowledge'
 import { sourceDocs } from '@/content/sourceDocs'
 import type { KnowledgeItem, SourceDoc } from '@/types'
 import { complete, isLive, LLMUnavailable } from './llm'
@@ -62,6 +63,8 @@ export interface PipelineEvent {
   doc?: SourceDoc
   item?: KnowledgeItem
   message?: string
+  /** Why extracted items were dropped. Set on the 'validate' stage only. */
+  rejected?: ValidationError[]
 }
 
 /**
@@ -77,8 +80,20 @@ export async function* runKnowledgeAgent(
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms / speed))
 
   for (const doc of docs) {
+    /* Populated by the extract stage, reported by the validate stage that
+     * follows it for the same doc. */
+    let rejected: ValidationError[] = []
+
     for (const stage of STAGES) {
-      yield { type: 'stage', stage: stage.id, doc, message: `${stage.label} · ${doc.name}` }
+      const note =
+        stage.id === 'validate' && rejected.length ? ` · dropped ${rejected.length} uncitable` : ''
+      yield {
+        type: 'stage',
+        stage: stage.id,
+        doc,
+        message: `${stage.label} · ${doc.name}${note}`,
+        rejected: stage.id === 'validate' ? rejected : undefined,
+      }
       await wait(stage.id === 'extract' ? 520 : 190)
 
       if (stage.id === 'extract') {
@@ -91,7 +106,20 @@ export async function* runKnowledgeAgent(
               maxTokens: 1600,
               temperature: 0.2,
             })
-            emitted = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, '')) as KnowledgeItem[]
+            const parsed: unknown = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ''))
+
+            /* A model completion is untrusted input, and this is the only path
+             * that produces knowledge the content suite never saw. An item that
+             * cannot be cited makes a character decline; an unknown severity
+             * reaches retrieval as NaN rather than as an error. Both are caught
+             * here instead of downstream. */
+            if (Array.isArray(parsed)) {
+              const split = partitionValidItems(parsed as KnowledgeItem[])
+              rejected = split.rejected.flatMap((r) => r.errors)
+              /* Every item rejected is a failed extraction, not an empty one —
+               * fall back so the doc still contributes its known-good rules. */
+              emitted = split.valid.length ? split.valid : null
+            }
           } catch (e) {
             if (!(e instanceof LLMUnavailable) && !(e instanceof SyntaxError)) throw e
           }

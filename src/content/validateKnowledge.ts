@@ -59,24 +59,45 @@ export function sanitizeText(input: string): string {
     .trim()
 }
 
-/** Field-wise sanitise. Returns a new item; never mutates the input. */
+/** Sanitises actual strings only. Anything else passes through untouched, so
+ *  validateKnowledgeItem still sees the wrong type and reports it rather than
+ *  having it quietly coerced into something that passes. */
+const sanitizeIfString = (v: unknown): unknown => (typeof v === 'string' ? sanitizeText(v) : v)
+
+/** Sanitises a list of strings, dropping blanks. Non-arrays pass through. */
+const sanitizeList = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(sanitizeIfString).filter((x) => x !== '') : v
+
+/**
+ * Field-wise sanitise. Returns a new item; never mutates the input.
+ *
+ * Tolerates malformed input by design: this runs on model output, where a field
+ * may be missing or the wrong type entirely. Nothing here throws — a bad shape
+ * is passed through for validateKnowledgeItem to reject with a real message,
+ * rather than crashing the whole ingest run on a TypeError.
+ */
 export function sanitizeKnowledgeItem(item: KnowledgeItem): KnowledgeItem {
+  if (!item || typeof item !== 'object') return item
+  const source: unknown = item.source
   return {
     ...item,
-    id: sanitizeText(item.id),
-    topic: sanitizeText(item.topic),
-    rule: sanitizeText(item.rule),
-    commonMistake: sanitizeText(item.commonMistake),
-    consequence: sanitizeText(item.consequence),
-    edgeCases: item.edgeCases.map(sanitizeText).filter(Boolean),
-    recommended: item.recommended.map(sanitizeText).filter(Boolean),
-    prohibited: item.prohibited.map(sanitizeText).filter(Boolean),
-    source: {
-      ...item.source,
-      doc: sanitizeText(item.source.doc),
-      section: sanitizeText(item.source.section),
-    },
-  }
+    id: sanitizeIfString(item.id),
+    topic: sanitizeIfString(item.topic),
+    rule: sanitizeIfString(item.rule),
+    commonMistake: sanitizeIfString(item.commonMistake),
+    consequence: sanitizeIfString(item.consequence),
+    edgeCases: sanitizeList(item.edgeCases),
+    recommended: sanitizeList(item.recommended),
+    prohibited: sanitizeList(item.prohibited),
+    source:
+      source && typeof source === 'object'
+        ? {
+            ...(source as KnowledgeItem['source']),
+            doc: sanitizeIfString((source as KnowledgeItem['source']).doc),
+            section: sanitizeIfString((source as KnowledgeItem['source']).section),
+          }
+        : source,
+  } as KnowledgeItem
 }
 
 /* --------------------------------------------------------------- validation */

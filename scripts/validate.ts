@@ -12,6 +12,7 @@ import { applyDecision, baselineMastery, weakestConcept, episodeScore } from '..
 import { estimateSuccess, wagerOptions } from '../src/engine/risk'
 import {
   partitionValidItems,
+  sanitizeKnowledgeItem,
   sanitizeText,
   validateKnowledgeItem,
   validateKnowledgeSet,
@@ -318,6 +319,50 @@ ok(sanitizeText(dirty) === 'Report it through the portal.', `sanitizer should st
 const split = partitionValidItems([validItem, bad({ id: 'K-TST-02', severity: 'urgent' as KnowledgeItem['severity'] })])
 ok(split.valid.length === 1 && split.rejected.length === 1, 'partition should split valid from rejected')
 ok(split.rejected[0].errors.some(e => e.field === 'severity'), 'a rejected item should carry its own errors')
+
+/* Model output is the only untrusted source of knowledge items, and it can omit
+ * a field entirely or send the wrong type. Sanitising must survive that and
+ * hand the shape to the validator rather than throwing on it. */
+const malformed = [
+  { ...validItem, id: 'K-TST-10', edgeCases: undefined },
+  { ...validItem, id: 'K-TST-11', source: undefined },
+  { ...validItem, id: 'K-TST-12', recommended: 'Report it' },
+  { ...validItem, id: 'K-TST-13', topic: 42 },
+  null,
+] as unknown as KnowledgeItem[]
+
+let partitionThrew: string | null = null
+let malformedSplit: ReturnType<typeof partitionValidItems> | null = null
+try {
+  malformedSplit = partitionValidItems(malformed)
+} catch (e) {
+  partitionThrew = (e as Error).message
+}
+ok(!partitionThrew, `partition should not throw on malformed model output, got "${partitionThrew}"`)
+ok(malformedSplit?.valid.length === 0, 'no malformed item should be accepted')
+ok(malformedSplit?.rejected.length === malformed.length, 'every malformed item should be rejected')
+ok(
+  malformedSplit?.rejected[0].errors.some(e => e.field === 'edgeCases'),
+  'a missing array should be reported as a field error, not swallowed',
+)
+ok(
+  malformedSplit?.rejected[1].errors.some(e => e.field === 'source'),
+  'a missing source should be reported as uncitable',
+)
+ok(
+  malformedSplit?.rejected[2].errors.some(e => e.field === 'recommended'),
+  'a string where an array belongs should be reported',
+)
+ok(
+  malformedSplit?.rejected[3].errors.some(e => e.field === 'topic'),
+  'a number should not be coerced into a passing string',
+)
+
+/* The sanitiser still has to do its real job on well-formed input. */
+const sanitised = sanitizeKnowledgeItem(bad({ rule: `Report${NUL} it${ZWSP}  now.` }))
+ok(sanitised.rule === 'Report it now.', `sanitise should clean a valid item, got "${sanitised.rule}"`)
+ok(validItem.rule.includes('Security Portal'), 'sanitise must not mutate its input')
+
 console.log(`${kb.errors.length} errors on the shipped base · ${split.valid.length} valid / ${split.rejected.length} rejected on a mixed batch`)
 
 /* ------------------------------------------------------- ingest: parsing */
