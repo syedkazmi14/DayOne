@@ -98,6 +98,52 @@
     bottom: 0;
   }
 
+  /* Scrims. Multi-stop ramps, not a single midpoint stop.
+   *
+   * `from-X via-X/80 to-transparent` looks smooth in the class list but the
+   * alpha slope more than doubles at the middle stop, and the eye reads that
+   * derivative break as a hard edge (a Mach band) straight across the page.
+   * The header's break drew a horizontal line near the top and the hero's drew
+   * a vertical one down the exact centre. These ramp in an ease instead, so
+   * there is no single point where the rate of change jumps. */
+  .scrim-top {
+    background-image: linear-gradient(
+      to bottom,
+      rgba(5, 6, 7, 1) 0%,
+      rgba(5, 6, 7, 0.98) 12%,
+      rgba(5, 6, 7, 0.92) 24%,
+      rgba(5, 6, 7, 0.8) 38%,
+      rgba(5, 6, 7, 0.62) 52%,
+      rgba(5, 6, 7, 0.4) 68%,
+      rgba(5, 6, 7, 0.18) 84%,
+      rgba(5, 6, 7, 0) 100%
+    );
+  }
+  .scrim-bottom {
+    background-image: linear-gradient(
+      to top,
+      rgba(5, 6, 7, 1) 0%,
+      rgba(5, 6, 7, 0.94) 16%,
+      rgba(5, 6, 7, 0.82) 32%,
+      rgba(5, 6, 7, 0.62) 50%,
+      rgba(5, 6, 7, 0.38) 68%,
+      rgba(5, 6, 7, 0.16) 85%,
+      rgba(5, 6, 7, 0) 100%
+    );
+  }
+  .scrim-left {
+    background-image: linear-gradient(
+      to right,
+      rgba(5, 6, 7, 1) 0%,
+      rgba(5, 6, 7, 0.96) 14%,
+      rgba(5, 6, 7, 0.88) 28%,
+      rgba(5, 6, 7, 0.74) 42%,
+      rgba(5, 6, 7, 0.56) 58%,
+      rgba(5, 6, 7, 0.4) 74%,
+      rgba(5, 6, 7, 0.3) 100%
+    );
+  }
+
   .scanlines {
     background-image: repeating-linear-gradient(
       to bottom,

@@ -68,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             key="chrome-header"
             {...FADE}
             transition={CHROME_FADE}
-            className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-3 bg-gradient-to-b sm:gap-6 from-ink-900 via-ink-900/72 via-45% to-transparent px-6 pb-28 pt-5 sm:px-10 [&>*]:pointer-events-auto"
+            className="pointer-events-none absolute inset-x-0 top-0 z-30 scrim-top flex items-center gap-3 px-6 pb-28 pt-5 sm:gap-6 sm:px-10 [&>*]:pointer-events-auto"
           >
             <button className="shrink-0" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
               <span className="font-sans text-[19px] font-semibold tracking-[-0.015em] text-bone">DayOne</span>
@@ -80,7 +80,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   key={view}
                   onClick={() => dispatch({ type: 'GOTO', view })}
                   className={`shrink-0 px-2 py-2 font-sans text-[13px] tracking-[-0.005em] transition-colors sm:px-2.5 ${
-                    state.view === view ? 'font-medium text-signal' : 'text-bone-dim hover:text-bone'
+                    state.view === view ? 'font-medium text-signal' : 'text-bone hover:text-white'
                   }`}
                 >
                   {label}
@@ -147,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             key="chrome-scrim"
             {...FADE}
             transition={CHROME_FADE}
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-24 bg-gradient-to-t from-ink-900 via-ink-900/80 to-transparent"
+            className="scrim-bottom pointer-events-none absolute inset-x-0 bottom-0 z-30 h-24"
           />
         )}
       </AnimatePresence>

@@ -51,7 +51,7 @@ export function Home() {
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-ink-700 to-ink-900" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-r from-ink-900 via-ink-900/80 to-ink-900/30" />
+        <div className="scrim-left absolute inset-0" />
         <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-ink-900 to-transparent" />
 
         <div className="relative flex min-h-[58vh] flex-col justify-center px-6 py-16 sm:px-12 lg:px-20">
