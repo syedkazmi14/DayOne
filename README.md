@@ -221,6 +221,29 @@ SceneCanvas:  AI clip  ->  AI background/keyframe  ->  procedural previs
 - **Audio is not video.** ElevenLabs voices the cast; it does not generate
   scenes.
 
+### Content persistence
+
+Before a company's uploaded documents and the knowledge the Studio extracts
+from them are worth anything, they need to survive a page reload — the whole
+point of *company-specific* onboarding is that it outlasts one browser tab.
+
+`src/data/contentStore.ts` is the seam: a `ContentStore` interface with a
+`static` tier (the shipped demo corpus, read-only, always available) and a
+`db` tier. `server/mediaServer.mjs` backs `db` with a small SQLite database
+(`data/content.db`, via `node:sqlite` — built into Node 22.5+, no dependency
+and no external account) behind `/api/media/content/{docs,knowledge}`. The
+Studio switches to it automatically the moment the media server's health
+check answers, the same discovery `src/media/mediaStatus.ts` already does for
+video, image and audio — no separate flag.
+
+Without the media server running, uploads and extracted rules still work for
+that session; they simply do not survive a reload, exactly as before this was
+added. The Studio's status row says which tier is active.
+
+This is the same local-first shape as video/image/audio storage: a real
+database, zero cloud account, upgradeable later (a hosted Postgres, a
+per-company schema) without the app above this seam knowing the difference.
+
 ---
 
 ## Voice
@@ -478,9 +501,13 @@ React 18 · TypeScript · Tailwind · Framer Motion · Lucide · Vite
   and the client side is tested against a fake server. Treat the first real
   render as the integration test.
 - The media server keeps render jobs in memory (a restart loses in-flight
-  jobs) and stores to local disk. `putObject()` is the one function an S3/R2
-  adapter replaces.
+  jobs) and stores binary assets to local disk. `putObject()` is the one
+  function an S3/R2 adapter replaces.
 - Offline, the knowledge agent can only replay the shipped corpus. A newly
   uploaded document yields no rules without a language model, and the Studio
   says so.
 - Progression and published episodes persist to `localStorage` only.
+- **Uploaded documents and extracted knowledge persist to a local SQLite
+  database** (`server/mediaServer.mjs`, via `node:sqlite` — no dependency, no
+  account) whenever the media server is running; without it, a Studio session
+  lives in memory only, same as before. See *Content persistence* below.

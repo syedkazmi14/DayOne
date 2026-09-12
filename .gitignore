@@ -6,5 +6,6 @@ scripts/.out
 .DS_Store
 *.log
 tsconfig.tsbuildinfo
-# generated assets written by server/mediaServer.mjs
+# generated assets + content database written by server/mediaServer.mjs
 storage
+data

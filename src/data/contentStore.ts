@@ -1,5 +1,6 @@
 import { knowledgeBase } from '@/content/knowledge'
 import { sourceDocs } from '@/content/sourceDocs'
+import { MEDIA_BASE, mediaHealth, subscribeMediaStatus } from '@/media/mediaStatus'
 import type { KnowledgeItem, SourceDoc } from '@/types'
 
 /* ============================================================================
@@ -73,3 +74,57 @@ export function setContentStore(store: ContentStore): void {
 
 export const contentStoreLabel = (): string =>
   active.kind === 'db' ? 'DATABASE' : 'STATIC BUNDLE'
+
+/* -------------------------------------------------------------- db-backed */
+
+/**
+ * Talks to server/mediaServer.mjs's /api/media/content/* routes, which
+ * persist to a local SQLite file (node:sqlite — no dependency, no account).
+ * A Studio upload and its extracted knowledge now survive a reload; without
+ * the media server running, `active` never switches away from the static
+ * store below, so nothing here changes for anyone not running it.
+ */
+export function createHttpContentStore(base: string): ContentStore {
+  return {
+    kind: 'db',
+    async listKnowledge() {
+      const res = await fetch(`${base}/content/knowledge`)
+      if (!res.ok) return []
+      return ((await res.json()) as { items?: KnowledgeItem[] }).items ?? []
+    },
+    async saveKnowledge(items) {
+      await fetch(`${base}/content/knowledge`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items }),
+      })
+    },
+    async listSourceDocs() {
+      const res = await fetch(`${base}/content/docs`)
+      if (!res.ok) return []
+      return ((await res.json()) as { docs?: SourceDoc[] }).docs ?? []
+    },
+    async saveSourceDoc(doc) {
+      await fetch(`${base}/content/docs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(doc),
+      })
+    },
+  }
+}
+
+/**
+ * Switch to the database-backed store the moment the media server confirms
+ * it is up — same discovery the video/image/audio tiers already use, so this
+ * needs no separate probe. Runs once immediately (the health probe may have
+ * already landed) and again on every status change.
+ */
+function syncWithMediaServer(): void {
+  if (mediaHealth()?.content.configured) setContentStore(createHttpContentStore(MEDIA_BASE))
+}
+
+if (typeof window !== 'undefined') {
+  syncWithMediaServer()
+  subscribeMediaStatus(syncWithMediaServer)
+}
