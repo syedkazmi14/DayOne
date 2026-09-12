@@ -19,6 +19,13 @@ g.MouseEvent = dom.window.MouseEvent
 g.KeyboardEvent = dom.window.KeyboardEvent
 g.getComputedStyle = dom.window.getComputedStyle
 g.localStorage = dom.window.localStorage
+/* The app opens on the sign-in gate. The bulk of this suite is about what
+ * happens AFTER sign-in, so seed a session rather than re-driving the gate
+ * before every assertion; the gate itself is exercised at the end. */
+dom.window.localStorage.setItem(
+  'onboard.session.v1',
+  JSON.stringify({ role: 'employee', provider: 'Okta', signedInAt: Date.now() }),
+)
 g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16) as unknown as number
 g.cancelAnimationFrame = (id: number) => clearTimeout(id)
 g.IS_REACT_ACT_ENVIRONMENT = true
@@ -47,11 +54,28 @@ const flush = async (ms = 60) => { await act(async () => { await sleep(ms) }) }
 const body = () => document.body.textContent ?? ''
 const has = (s: string) => body().toLowerCase().includes(s.toLowerCase())
 
+/**
+ * Visible text first, then `aria-label`. Not every affordance is a word — the
+ * header profile control is an avatar whose only text is the player's initials
+ * — and the suite should drive what a user (or a screen reader) can actually
+ * reach, not just what happens to render as a label.
+ */
 function findByText(needle: string, tag = 'button'): HTMLElement | null {
   const n = needle.toLowerCase()
   const els = [...document.querySelectorAll<HTMLElement>(tag)]
-  return els.find((e) => (e.textContent ?? '').toLowerCase().trim().includes(n)) ?? null
+  return (
+    els.find((e) => (e.textContent ?? '').toLowerCase().trim().includes(n)) ??
+    els.find((e) => (e.getAttribute('aria-label') ?? '').toLowerCase().includes(n)) ??
+    null
+  )
 }
+/* The profile screen sits behind the header avatar's account menu, so reaching
+ * it is two clicks: open the menu, then pick the item. */
+async function openProfile() {
+  if (!(await click('account menu'))) return false
+  return click('profile')
+}
+
 async function click(needle: string, tag = 'button', label = needle) {
   const el = findByText(needle, tag)
   if (!el) { fails++; console.log(`  ✗ could not find ${tag} "${label}"`); return false }
@@ -378,7 +402,7 @@ await flush(300)
 ok(has("generated from your company's material"), 'the published episode sits on the home shelf')
 
 console.log('\n=== 12. SECOND RUN: THE FAILURE BRANCHES ===')
-await click('profile')                // reset lives on the profile screen
+await openProfile()                // reset lives on the profile screen
 await flush(250)
 await click('reset progression')
 await flush(300)
@@ -471,7 +495,7 @@ const saved = () => JSON.parse(localStorage.getItem('onboard.player.v1') ?? '{}'
 
 await click('episodes')
 await flush(300)
-await click('profile')
+await openProfile()
 await flush(300)
 await click('shop')
 await flush(300)
@@ -487,7 +511,7 @@ ok(cardText('Perfect Episode').includes('Not for sale'), 'unearned badges are no
 ok(!cardButton('Perfect Episode', 'Buy'), 'no buy button on earned badges')
 await press(cardButton('First Week', 'Equip'), 'equip First Week')
 ok(cardText('First Week').includes('Equipped'), 'earned badge equipped')
-await click('profile')
+await openProfile()
 await flush(300)
 ok(has('First Week') && has('Customize profile'), 'profile shows the badge and the customize link')
 
@@ -533,7 +557,7 @@ ok(s.credits === 40, 'credits persisted')
 ok(['portal-frame', 'mr-poopybutthole', 'first-day-survivor'].every((id) => s.cosmetics?.ownedItems?.includes(id)), 'purchases persisted')
 ok(s.cosmetics?.equippedBorder === 'portal-frame' && s.cosmetics?.equippedTitle === 'first-day-survivor' && s.cosmetics?.showcaseCharacter === 'mr-poopybutthole', 'equipped state persisted')
 
-await click('profile')
+await openProfile()
 await flush(300)
 ok(has('First Day Survivor'), 'profile shows equipped title')
 ok(has('Showcase') && has('Mr. Poopybutthole') && has('Placeholder art'), 'profile shows showcase with labelled placeholder art')

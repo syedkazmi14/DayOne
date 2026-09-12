@@ -133,6 +133,16 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--hide-scrollbars', '--force-device-scale-factor=1'],
 })
 const page = await browser.newPage()
+/* The app opens on the sign-in gate; these checks are about the signed-in
+ * surfaces. Seeded before any page script runs, so the first paint is Home. */
+await page.evaluateOnNewDocument(() => {
+  try {
+    localStorage.setItem(
+      'onboard.session.v1',
+      JSON.stringify({ role: 'employee', provider: 'Okta', signedInAt: Date.now() }),
+    )
+  } catch {}
+})
 
 const problems = []
 page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
