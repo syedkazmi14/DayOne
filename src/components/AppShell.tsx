@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { characterGroups } from '@/content/characterGroups'
 import { playableCount } from '@/content/episodes'
 import { useGame, type View } from '@/engine/gameStore'
+import { applyTheme, BASE, channelsToHex, getTheme, loadThemeId, saveThemeId, themeSwatch, THEMES } from '@/theme/themes'
 import { FilmOverlay } from './ui/Grain'
 import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
 
@@ -44,16 +45,50 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   /* Account menu. Closes on outside click, on Escape, and on any navigation —
    * a menu still hanging open over the next screen is the classic bug here. */
   const [menuOpen, setMenuOpen] = useState(false)
-  /* The show list is a flyout off "Change show" rather than four rows sitting
-   * in the account menu: switching show is rare next to Profile and Sign out,
-   * and four permanent rows made the common items scroll past. */
-  const [showsOpen, setShowsOpen] = useState(false)
+  /* Both lists are flyouts off a row rather than rows sitting in the menu
+   * itself: each is rare next to Profile and Sign out, and ten permanent rows
+   * would push the common items off the bottom. One open at a time. */
+  const [openSub, setOpenSub] = useState<'shows' | 'theme' | null>(null)
+  /* Hover previews a flyout, a click pins it open, so a list can be read
+   * without holding the pointer perfectly still over the row. */
+  const [pinned, setPinned] = useState(false)
+  const [themeId, setThemeIdState] = useState<string>(loadThemeId)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setMenuOpen(false), [state.view])
   useEffect(() => {
-    if (!menuOpen) setShowsOpen(false)
+    if (!menuOpen) {
+      setOpenSub(null)
+      setPinned(false)
+    }
   }, [menuOpen])
+
+  const setTheme = (id: string) => {
+    setThemeIdState(id)
+    applyTheme(id)
+    saveThemeId(id)
+  }
+
+  const subProps = (id: 'shows' | 'theme') => ({
+    onMouseEnter: () => {
+      if (!pinned) setOpenSub(id)
+    },
+    onMouseLeave: () => {
+      if (!pinned) setOpenSub(null)
+    },
+  })
+  /** The live accent, for the dot on the Theme row. */
+  const activeAccent = channelsToHex({ ...BASE, ...getTheme(themeId).vars }['--signal'])
+
+  const subToggle = (id: 'shows' | 'theme') => () => {
+    if (openSub === id && pinned) {
+      setOpenSub(null)
+      setPinned(false)
+    } else {
+      setOpenSub(id)
+      setPinned(true)
+    }
+  }
 
   /* Switching show also returns to the lobby, because that is the only screen
    * the choice is visible on. Closing is explicit: GOTO home from home leaves
@@ -61,7 +96,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const chooseShow = (groupId: string) => {
     dispatch({ type: 'SELECT_GROUP', groupId })
     dispatch({ type: 'GOTO', view: 'home' })
-    setShowsOpen(false)
+    setOpenSub(null)
+    setPinned(false)
     setMenuOpen(false)
   }
 
@@ -90,9 +126,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       /* Escape backs out one level at a time, so it never closes the whole
-       * menu out from under someone browsing shows. */
-      if (showsOpen) setShowsOpen(false)
-      else setMenuOpen(false)
+       * menu out from under someone browsing shows or themes. */
+      if (openSub) {
+        setOpenSub(null)
+        setPinned(false)
+      } else setMenuOpen(false)
     }
     document.addEventListener('mousedown', onPointer)
     document.addEventListener('keydown', onKey)
@@ -100,7 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       document.removeEventListener('mousedown', onPointer)
       document.removeEventListener('keydown', onKey)
     }
-  }, [menuOpen, showsOpen])
+  }, [menuOpen, openSub])
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-ink-900">
@@ -123,11 +161,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <button
                   key={view}
                   onClick={() => dispatch({ type: 'GOTO', view })}
-                  className={`shrink-0 px-2 py-2 font-sans text-[13px] tracking-[-0.005em] transition-colors sm:px-2.5 ${
+                  className={`relative shrink-0 px-2 py-2 font-sans text-[13px] tracking-[-0.005em] transition-colors sm:px-2.5 ${
                     state.view === view ? 'font-medium text-signal' : 'text-bone hover:text-white'
                   }`}
                 >
                   {label}
+                  {/* Weight and an underline, not colour alone: a theme whose
+                    * accent is the text colour would leave the current tab
+                    * looking exactly like the other two. */}
+                  {state.view === view && (
+                    <span aria-hidden className="absolute inset-x-2 bottom-1 h-px bg-signal sm:inset-x-2.5" />
+                  )}
                 </button>
               ))}
             </nav>
@@ -167,16 +211,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       * preference rather than a destination, which is what puts
                       * it here rather than in the nav. Chosen once at
                       * onboarding; this is where it gets changed. */}
-                    <div
-                      className="relative"
-                      onMouseEnter={() => setShowsOpen(true)}
-                      onMouseLeave={() => setShowsOpen(false)}
-                    >
+                    <div className="relative" {...subProps('shows')}>
                       <button
                         role="menuitem"
                         aria-haspopup="menu"
-                        aria-expanded={showsOpen}
-                        onClick={() => setShowsOpen((v) => !v)}
+                        aria-expanded={openSub === 'shows'}
+                        onClick={subToggle('shows')}
                         className="flex w-full items-center gap-2 px-4 py-2.5 text-left font-sans text-[13px] text-bone-dim transition-colors hover:bg-bone/5 hover:text-bone"
                       >
                         Change show
@@ -185,7 +225,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       </button>
 
                       <AnimatePresence>
-                        {showsOpen && (
+                        {openSub === 'shows' && (
                           <motion.div
                             role="menu"
                             aria-label="Show"
@@ -227,6 +267,70 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                                 </button>
                               )
                             })}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    {/* THEME — a local design tool, not a shipping setting.
+                      * Rewrites the palette variables on :root, which every
+                      * Tailwind colour token resolves through, so the whole app
+                      * recolours at once. See src/theme/themes.ts. */}
+                    <div className="relative" {...subProps('theme')}>
+                      <button
+                        role="menuitem"
+                        aria-haspopup="menu"
+                        aria-expanded={openSub === 'theme'}
+                        onClick={subToggle('theme')}
+                        className="flex w-full items-center gap-2 px-4 py-2.5 text-left font-sans text-[13px] text-bone-dim transition-colors hover:bg-bone/5 hover:text-bone"
+                      >
+                        Theme
+                        <span
+                          aria-hidden
+                          className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: activeAccent }}
+                        />
+                        <span aria-hidden className="shrink-0 text-bone-faint">&rsaquo;</span>
+                      </button>
+
+                      <AnimatePresence>
+                        {openSub === 'theme' && (
+                          <motion.div
+                            role="menu"
+                            aria-label="Theme"
+                            initial={{ opacity: 0, x: 4 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 4 }}
+                            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+                            className="menu-surface absolute right-full top-0 z-50 w-56 py-1"
+                          >
+                            {THEMES.map((t) => {
+                              const active = t.id === themeId
+                              const sw = themeSwatch(t)
+                              return (
+                                <button
+                                  key={t.id}
+                                  role="menuitemradio"
+                                  aria-checked={active}
+                                  onClick={() => setTheme(t.id)}
+                                  className="flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-bone/5"
+                                >
+                                  <span className="flex shrink-0 gap-[3px]">
+                                    {[sw.ground, sw.accent, sw.text].map((c) => (
+                                      <span
+                                        key={c}
+                                        className="block h-2.5 w-2.5 rounded-full"
+                                        style={{ background: c, boxShadow: 'inset 0 0 0 1px rgb(var(--bone) / .2)' }}
+                                      />
+                                    ))}
+                                  </span>
+                                  <span className={`font-sans text-[13px] ${active ? 'text-bone' : 'text-bone-dim'}`}>
+                                    {t.name}
+                                  </span>
+                                </button>
+                              )
+                            })}
+
                           </motion.div>
                         )}
                       </AnimatePresence>

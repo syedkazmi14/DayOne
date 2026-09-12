@@ -80,7 +80,7 @@ export function SignIn({ onSignIn }: Props) {
             <input type="password" name="password" placeholder="Password" autoComplete="off" className={FIELD} />
             <button
               type="submit"
-              className="w-full bg-signal px-4 py-3 font-sans text-[13.5px] font-semibold text-ink-900 transition-colors hover:bg-signal-hot"
+              className="w-full bg-signal px-4 py-3 font-sans text-[13.5px] font-semibold text-signal-ink transition-colors hover:bg-signal-hot"
             >
               Sign in
             </button>

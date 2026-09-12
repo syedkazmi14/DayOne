@@ -60,7 +60,7 @@ export function Btn({
   const sizes = { md: 'px-6 py-3 text-[13.5px]', sm: 'px-4 py-2 text-[13px]' }
   const base = `group relative inline-flex items-center justify-center gap-2 rounded font-sans font-medium transition-colors duration-200 disabled:opacity-35 disabled:pointer-events-none ${sizes[size]}`
   const variants = {
-    primary: 'bg-signal text-ink-900 hover:bg-signal-hot',
+    primary: 'bg-signal text-signal-ink hover:bg-signal-hot',
     outline: 'border border-bone/15 text-bone-dim hover:border-bone/35 hover:text-bone',
     ghost: 'text-bone-dim hover:text-bone',
     danger: 'border border-danger/35 text-danger hover:bg-danger/10',
