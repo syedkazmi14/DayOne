@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer } from 'react'
 import { getEpisode as getAuthoredEpisode } from '@/content/episodes'
-import { DEFAULT_GROUP_ID, getGroup } from '@/content/characterGroups'
+import { characterGroups, getGroup } from '@/content/characterGroups'
 import { getCharacter } from '@/content/characters'
 import type {
   Character,
@@ -35,7 +35,16 @@ import { validateEpisode } from './validateEpisode'
  * refuses any graph that fails validation — so nothing unvalidated is playable.
  * ========================================================================== */
 
-export type View = 'signin' | 'home' | 'intro' | 'scene' | 'profile' | 'shop' | 'authoring' | 'results'
+export type View =
+  | 'signin'
+  | 'pickshow'
+  | 'home'
+  | 'intro'
+  | 'scene'
+  | 'profile'
+  | 'shop'
+  | 'authoring'
+  | 'results'
 
 /**
  * Who is using the app. Auth is a deliberate prototype stub — picking a
@@ -64,8 +73,11 @@ export interface GameState {
   /** Null until signed in; the app renders the sign-in screen while it is. */
   session: Session | null
   player: PlayerState
-  /** Which roster panel the home carousel is resting on. */
-  groupId: string
+  /**
+   * The chosen show. Null until this person picks one, which is what routes
+   * them to the picker; see loadGroupId.
+   */
+  groupId: string | null
   /**
    * Who the player last selected on the home screen. Voice playback resolves
    * this character's voice profile, so selection alone changes the voice.
@@ -94,6 +106,7 @@ export interface GameState {
 const STORAGE_KEY = 'onboard.player.v1'
 const PUBLISHED_KEY = 'onboard.published.v1'
 const SESSION_KEY = 'onboard.session.v1'
+const GROUP_KEY = 'onboard.group.v1'
 
 function loadSession(): Session | null {
   try {
@@ -125,8 +138,43 @@ const clearSession = () => {
   }
 }
 
-/** Where each role belongs once signed in. */
-const landingFor = (role: SessionRole): View => (role === 'admin' ? 'authoring' : 'home')
+/**
+ * The chosen show, or null if this person has never picked one.
+ *
+ * That null is load-bearing: it is the difference between "show me the picker"
+ * and "take me to the lobby", so it must not be collapsed to a default here.
+ * Everything downstream reads `getGroup(state.groupId)`, which already falls
+ * back to the first group, so a null id renders fine while the picker is on
+ * its way.
+ *
+ * Storage is not a trust boundary, exactly as with the session above: an id
+ * that no longer names a group reads as "never chosen" rather than being
+ * passed through.
+ */
+function loadGroupId(): string | null {
+  try {
+    const raw = localStorage.getItem(GROUP_KEY)
+    return characterGroups.some((g) => g.id === raw) ? raw : null
+  } catch {
+    return null
+  }
+}
+
+const saveGroupId = (id: string) => {
+  try {
+    localStorage.setItem(GROUP_KEY, id)
+  } catch {
+    /* private mode — the choice lasts for this tab only */
+  }
+}
+
+/**
+ * Where each role belongs once signed in. Employees who have never chosen a
+ * show get the picker first; admins go straight to the Studio, because the
+ * show scopes the lobby and they are not headed there.
+ */
+const landingFor = (role: SessionRole, groupId: string | null): View =>
+  role === 'admin' ? 'authoring' : groupId ? 'home' : 'pickshow'
 
 function loadPlayer(): PlayerState {
   const fresh: PlayerState = {
@@ -186,11 +234,12 @@ const savePublished = (eps: Record<string, Episode>) => {
 
 export const initialState = (): GameState => {
   const session = loadSession()
+  const groupId = loadGroupId()
   return {
-  view: session ? landingFor(session.role) : 'signin',
+  view: session ? landingFor(session.role, groupId) : 'signin',
   session,
   player: loadPlayer(),
-  groupId: DEFAULT_GROUP_ID,
+  groupId,
   selectedCharacterId: null,
   published: loadPublished(),
   episodeId: null,
@@ -292,20 +341,24 @@ export function reducer(state: GameState, action: Action): GameState {
     case 'SIGN_IN': {
       const session: Session = { role: action.role, provider: action.provider, signedInAt: Date.now() }
       saveSession(session)
-      return { ...state, session, view: landingFor(action.role) }
+      return { ...state, session, view: landingFor(action.role, state.groupId) }
     }
 
     case 'SIGN_OUT': {
       clearSession()
-      /* Progression and published content survive — this is a role switch, not
-       * a wipe. RESET_PROGRESS is the destructive one. */
+      /* Progression, published content and the chosen show all survive — this
+       * is a role switch, not a wipe, and signing back in should not ask for a
+       * show again. RESET_PROGRESS is the destructive one. */
       return { ...state, session: null, view: 'signin' }
     }
 
     case 'SELECT_GROUP': {
       const group = getGroup(action.groupId)
       if (group.id === state.groupId) return state
-      // Sliding to another roster drops a selection that belonged to the old
+      /* The show is a preference, not view state: it is chosen once at
+       * onboarding and changed rarely, so it outlives the tab. */
+      saveGroupId(group.id)
+      // Switching show drops a character selection that belonged to the old
       // one, so the voice never lags a group behind the visible cast.
       const keep = state.selectedCharacterId && getCharacter(state.selectedCharacterId).groupId === group.id
       return { ...state, groupId: group.id, selectedCharacterId: keep ? state.selectedCharacterId : null }

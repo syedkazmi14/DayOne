@@ -133,16 +133,20 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--hide-scrollbars', '--force-device-scale-factor=1'],
 })
 const page = await browser.newPage()
-/* The app opens on the sign-in gate; these checks are about the signed-in
- * surfaces. Seeded before any page script runs, so the first paint is Home. */
-await page.evaluateOnNewDocument(() => {
-  try {
-    localStorage.setItem(
-      'onboard.session.v1',
-      JSON.stringify({ role: 'employee', provider: 'Company SSO', signedInAt: Date.now() }),
-    )
-  } catch {}
-})
+/* The app opens on the sign-in gate, and a signed-in player who has never
+ * chosen a show gets the picker. Both are seeded before any page script runs,
+ * so the first paint is Home; the picker has its own pass at the end. */
+const seedSignedIn = (page) =>
+  page.evaluateOnNewDocument(() => {
+    try {
+      localStorage.setItem(
+        'onboard.session.v1',
+        JSON.stringify({ role: 'employee', provider: 'Company SSO', signedInAt: Date.now() }),
+      )
+      localStorage.setItem('onboard.group.v1', 'rick-and-morty')
+    } catch {}
+  })
+await seedSignedIn(page)
 
 const problems = []
 page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
@@ -229,27 +233,93 @@ async function viewport(label, width, height) {
   ok(m.brokenEager.length === 0, `every eager image decoded${m.brokenEager.length ? ` — ${m.brokenEager.join(', ')}` : ''}`)
   await shot(`${label}-1-hero`)
 
-  // Switch roster and re-check everything that moved.
+  // Switch show from the account menu and re-check everything that moved.
   const before = m.shelf.join('|')
-  await page.click('button[aria-label="Next roster"]')
+  await page.click('button[aria-label*="account menu"]')
+  await sleep(300)
+  const opened = await page.evaluate(() => {
+    const trigger = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
+      b.textContent?.includes('Change show'),
+    )
+    trigger?.click()
+    return !!trigger
+  })
+  await sleep(300)
+  const switched = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('[role="menuitemradio"]')]
+    const next = rows.find((b) => b.getAttribute('aria-checked') !== 'true')
+    next?.click()
+    return { rows: rows.length, name: next?.textContent?.trim() ?? null }
+  })
   await sleep(1100)
   m = await probe()
 
-  ok(m.shelf.join('|') !== before, `episode shelf followed the roster (now: ${m.shelf.join(' / ')})`)
-  ok(!!m.groupName, `switcher names the new roster (${m.groupName})`)
+  ok(opened, 'the account menu offers Change show')
+  ok(switched.rows === 4, `its flyout lists all four shows (got ${switched.rows})`)
+  ok(m.shelf.join('|') !== before, `episode shelf followed the show (now: ${m.shelf.join(' / ')})`)
+  ok(!!m.groupName, `cast strip names the new show (${m.groupName})`)
   ok(m.pageOverflow <= 0, `still no horizontal overflow after switching (${m.pageOverflow}px)`)
-  ok(m.portraitCount === 4, 'four portraits on the second roster')
-  ok(m.clippedCards.length === 0, 'nothing clips on the second roster')
+  ok(m.portraitCount === 4, 'four portraits on the second show')
+  ok(m.clippedCards.length === 0, 'nothing clips on the second show')
   ok(
     m.invisibleLoaded.length === 0,
-    `no invisible images after the roster change${m.invisibleLoaded.length ? ` — ${m.invisibleLoaded.join(', ')}` : ''}`,
+    `no invisible images after the show change${m.invisibleLoaded.length ? ` — ${m.invisibleLoaded.join(', ')}` : ''}`,
   )
-  await shot(`${label}-2-second-roster`)
+  await shot(`${label}-2-second-show`)
   await shot(`${label}-3-full`, { fullPage: true })
 }
 
 await viewport('desktop', 1440, 900)
 await viewport('mobile', 390, 844)
+
+/* The onboarding picker, which a first-time player meets before any of the
+ * above. It needs its own page because the seed at the top deliberately skips
+ * it, and it is a four-up grid of art tiles — exactly the shape that clips at
+ * one width and not another. */
+console.log('\n=== onboarding picker ===')
+const firstRun = await browser.newPage()
+firstRun.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
+firstRun.on('console', (m) => m.type() === 'error' && problems.push('console: ' + m.text()))
+await firstRun.evaluateOnNewDocument(() => {
+  try {
+    localStorage.setItem(
+      'onboard.session.v1',
+      JSON.stringify({ role: 'employee', provider: 'Company SSO', signedInAt: Date.now() }),
+    )
+    localStorage.removeItem('onboard.group.v1')
+  } catch {}
+})
+
+for (const [label, width, height] of [
+  ['desktop', 1440, 900],
+  ['mobile', 390, 844],
+]) {
+  await firstRun.setViewport({ width, height, deviceScaleFactor: 1 })
+  await firstRun.goto(URL, { waitUntil: 'networkidle2' })
+  await sleep(1000)
+
+  const m = await firstRun.evaluate(() => {
+    const doc = document.documentElement
+    const tiles = [...document.querySelectorAll('main button')]
+    return {
+      overflow: doc.scrollWidth - doc.clientWidth,
+      tiles: tiles.length,
+      chrome: !!document.querySelector('header'),
+      clipped: tiles.filter((b) => b.scrollHeight - b.clientHeight > 2 || b.scrollWidth - b.clientWidth > 2).length,
+      labelled: [...document.querySelectorAll('main button')].filter((b) =>
+        b.textContent?.includes('In production'),
+      ).length,
+    }
+  })
+
+  ok(m.tiles === 4, `${label}: four show tiles (got ${m.tiles})`)
+  ok(!m.chrome, `${label}: no app chrome over the picker`)
+  ok(m.overflow <= 0, `${label}: no horizontal page overflow (${m.overflow}px)`)
+  ok(m.clipped === 0, `${label}: no tile clips its own content`)
+  ok(m.labelled === 3, `${label}: the three unplayable shows are labelled (got ${m.labelled})`)
+  await firstRun.screenshot({ path: path.join(SHOTS, `pickshow-${label}.png`) })
+}
+await firstRun.close()
 
 console.log('\n=== console + network ===')
 ok(problems.length === 0, problems.length ? `clean (found: ${problems.slice(0, 5).join(' | ')})` : 'no errors or failed requests')

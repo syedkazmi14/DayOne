@@ -107,7 +107,7 @@ export function SignIn({ onSignIn }: Props) {
           </button>
 
           <p className="mt-10 max-w-sm font-mono text-[10px] uppercase leading-relaxed tracking-[0.12em] text-bone-faint">
-            auth is stubbed for this prototype. nothing is checked, nothing is stored — do not type a real password.
+            auth is stubbed for this prototype. nothing is checked, nothing is stored. do not type a real password.
           </p>
         </div>
       </div>

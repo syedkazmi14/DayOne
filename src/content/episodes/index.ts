@@ -247,6 +247,15 @@ export const getEpisode = (id: string) => episodes.find((e) => e.id === id)
 export const episodesForGroup = (groupId: string) => episodes.filter((e) => e.groupId === groupId)
 
 /**
+ * How many of a group's episodes can be played right now. Both the onboarding
+ * picker and the account menu label a show with this, so neither offers a
+ * choice that dead-ends on a hero with no start button. Derived, so the label
+ * disappears on its own as stubs get their scene graphs.
+ */
+export const playableCount = (groupId: string) =>
+  episodesForGroup(groupId).filter((e) => !e.locked).length
+
+/**
  * The episode the group's hero should feature: the first playable one, or the
  * first stub if the group has no graph authored yet.
  */

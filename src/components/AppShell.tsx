@@ -1,5 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
+import { characterGroups } from '@/content/characterGroups'
+import { playableCount } from '@/content/episodes'
 import { useGame, type View } from '@/engine/gameStore'
 import { FilmOverlay } from './ui/Grain'
 import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
@@ -30,19 +32,38 @@ const CHROME_FADE = { duration: 0.42, ease: [0.16, 1, 0.3, 1] } as const
 const FADE = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { state, dispatch } = useGame()
+  const { state, dispatch, group } = useGame()
   /* The cinematic screens carry their own chrome — a second header would
    * collide with their own back button and break the full-bleed frame. Sign-in
-   * has no chrome at all: there is nothing to navigate to yet. */
+   * and the show picker have no chrome at all: offering Episodes / Shop /
+   * Studio before a show is chosen navigates past the one question being
+   * asked. */
   const cinematic = state.view === 'scene' || state.view === 'intro' || state.view === 'results'
-  const inScene = cinematic || state.view === 'signin'
+  const inScene = cinematic || state.view === 'signin' || state.view === 'pickshow'
 
   /* Account menu. Closes on outside click, on Escape, and on any navigation —
    * a menu still hanging open over the next screen is the classic bug here. */
   const [menuOpen, setMenuOpen] = useState(false)
+  /* The show list is a flyout off "Change show" rather than four rows sitting
+   * in the account menu: switching show is rare next to Profile and Sign out,
+   * and four permanent rows made the common items scroll past. */
+  const [showsOpen, setShowsOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setMenuOpen(false), [state.view])
+  useEffect(() => {
+    if (!menuOpen) setShowsOpen(false)
+  }, [menuOpen])
+
+  /* Switching show also returns to the lobby, because that is the only screen
+   * the choice is visible on. Closing is explicit: GOTO home from home leaves
+   * `view` untouched, so the effect above would never fire. */
+  const chooseShow = (groupId: string) => {
+    dispatch({ type: 'SELECT_GROUP', groupId })
+    dispatch({ type: 'GOTO', view: 'home' })
+    setShowsOpen(false)
+    setMenuOpen(false)
+  }
 
   /* Condense the header fade once the screen scrolls. Each screen owns its own
    * overflow-y-auto container, so there is no window scroll to read: listen on
@@ -67,7 +88,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false)
+      if (e.key !== 'Escape') return
+      /* Escape backs out one level at a time, so it never closes the whole
+       * menu out from under someone browsing shows. */
+      if (showsOpen) setShowsOpen(false)
+      else setMenuOpen(false)
     }
     document.addEventListener('mousedown', onPointer)
     document.addEventListener('keydown', onKey)
@@ -75,7 +100,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       document.removeEventListener('mousedown', onPointer)
       document.removeEventListener('keydown', onKey)
     }
-  }, [menuOpen])
+  }, [menuOpen, showsOpen])
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-ink-900">
@@ -136,8 +161,79 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -4 }}
                     transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                    className="glass-strong absolute right-0 top-full z-40 mt-2 w-44 py-1"
+                    className="menu-surface absolute right-0 top-full z-40 mt-2 w-48 py-1"
                   >
+                    {/* The show scopes the whole episode shelf, so it is a
+                      * preference rather than a destination, which is what puts
+                      * it here rather than in the nav. Chosen once at
+                      * onboarding; this is where it gets changed. */}
+                    <div
+                      className="relative"
+                      onMouseEnter={() => setShowsOpen(true)}
+                      onMouseLeave={() => setShowsOpen(false)}
+                    >
+                      <button
+                        role="menuitem"
+                        aria-haspopup="menu"
+                        aria-expanded={showsOpen}
+                        onClick={() => setShowsOpen((v) => !v)}
+                        className="flex w-full items-center gap-2 px-4 py-2.5 text-left font-sans text-[13px] text-bone-dim transition-colors hover:bg-bone/5 hover:text-bone"
+                      >
+                        Change show
+                        {/* Text, not an icon: this header is type only. */}
+                        <span aria-hidden className="ml-auto shrink-0 text-bone-faint">&rsaquo;</span>
+                      </button>
+
+                      <AnimatePresence>
+                        {showsOpen && (
+                          <motion.div
+                            role="menu"
+                            aria-label="Show"
+                            initial={{ opacity: 0, x: 4 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 4 }}
+                            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+                            /* Flies out to the left: the account menu is already
+                             * pinned to the right edge of the viewport. Flush
+                             * against it on purpose — the flyout is a child of
+                             * the row that opens it, so any gap between them is
+                             * outside both, and crossing it fired mouseLeave
+                             * then mouseEnter on every pass: a flicker loop. */
+                            className="menu-surface absolute right-full top-0 z-50 w-56 py-1"
+                          >
+                            {characterGroups.map((g) => {
+                              const active = g.id === group.id
+                              return (
+                                <button
+                                  key={g.id}
+                                  role="menuitemradio"
+                                  aria-checked={active}
+                                  onClick={() => chooseShow(g.id)}
+                                  className="flex w-full items-center gap-2.5 px-4 py-2 text-left font-sans text-[13px] transition-colors hover:bg-bone/5"
+                                >
+                                  <span
+                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                    style={{
+                                      background: active ? g.accent : 'transparent',
+                                      boxShadow: active ? undefined : 'inset 0 0 0 1px rgba(237,233,226,.25)',
+                                    }}
+                                  />
+                                  <span className={active ? 'text-bone' : 'text-bone-dim'}>{g.name}</span>
+                                  {playableCount(g.id) === 0 && (
+                                    <span className="ml-auto shrink-0 font-sans text-[11px] text-bone-faint">
+                                      In production
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    <div role="separator" className="my-1 h-px bg-bone/10" />
+
                     <button
                       role="menuitem"
                       onClick={() => dispatch({ type: 'GOTO', view: 'profile' })}

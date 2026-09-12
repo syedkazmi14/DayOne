@@ -1,6 +1,6 @@
-import { ChevronLeft, ChevronRight, Loader2, Volume2, VolumeX } from 'lucide-react'
+import { Loader2, Volume2, VolumeX } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { characterGroups, groupCast, groupIndex } from '@/content/characterGroups'
+import { characterGroups, groupCast } from '@/content/characterGroups'
 import { useGame } from '@/engine/gameStore'
 import type { Character } from '@/types'
 import { speak, stopAllSpeech, type SpeechHandle } from '@/voice/voice'
@@ -8,16 +8,21 @@ import { CharacterAvatar } from './ui/CharacterAvatar'
 import { CHARACTER_WIDTHS, preloadImage } from './ui/responsiveImage'
 
 /* ============================================================================
- * CAST SWITCHER — the compact roster control in the hero corner.
+ * CAST STRIP — the roster of the selected show, in the hero corner.
  *
- * Four small portraits, the group name, and a pair of arrows to move between
- * rosters. That is the whole surface: the episode shelf below reads the same
- * selected group, so switching here reshelves the episodes.
+ * Four small portraits and the show name. Clicking a character previews their
+ * ElevenLabs voice; which voice that is comes entirely from the character's
+ * voiceProfileId, so casting a new character needs no change here. That is the
+ * whole surface — it is a sample, not navigation.
+ *
+ * It used to carry a pair of arrows that cycled between shows. They were the
+ * only way to reach nine of the twelve episodes, and they showed neither what
+ * the other shows were nor how many there were. Choosing a show is now asked
+ * once at onboarding (screens/PickShow) and changed from the account menu,
+ * where a preference belongs.
  *
  * Rendered from src/content/characterGroups.ts, so it does not know how many
- * groups exist. Clicking a character selects them and previews their
- * ElevenLabs voice; which voice that is comes entirely from the character's
- * voiceProfileId, so casting a new character needs no change here.
+ * groups exist.
  * ========================================================================== */
 
 const PORTRAIT = 62
@@ -35,7 +40,6 @@ const firstName = (name: string) => {
 
 export function CastSwitcher({ className = '' }: { className?: string }) {
   const { state, dispatch, group } = useGame()
-  const index = groupIndex(group.id)
   const cast = useMemo(() => groupCast(group), [group])
 
   const [previewOn, setPreviewOn] = useState(true)
@@ -43,15 +47,6 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
   const [loadingId, setLoadingId] = useState<string | null>(null)
   const [voiceNote, setVoiceNote] = useState<string | null>(null)
   const playing = useRef<SpeechHandle | null>(null)
-
-  /** Wraps around, so two arrows are enough to reach any roster. */
-  const go = useCallback(
-    (delta: number) => {
-      const next = (index + delta + characterGroups.length) % characterGroups.length
-      dispatch({ type: 'SELECT_GROUP', groupId: characterGroups[next].id })
-    },
-    [index, dispatch],
-  )
 
   useEffect(
     () => () => {
@@ -61,16 +56,15 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
     [],
   )
 
-  /* The arrows wrap, so the roster either side is one click away and its four
-   * portraits are a different set of files. Warm them at low priority. */
+  /* Every other show is one click away in the account menu, and each is a
+   * different set of portrait files. Warm them all at low priority — there are
+   * four groups, not four hundred. */
   useEffect(() => {
-    const n = characterGroups.length
-    for (const d of [1, -1]) {
-      for (const ch of groupCast(characterGroups[(index + d + n) % n])) {
-        preloadImage(ch.avatar?.src, CHARACTER_WIDTHS, PORTRAIT_SIZES)
-      }
+    for (const g of characterGroups) {
+      if (g.id === group.id) continue
+      for (const ch of groupCast(g)) preloadImage(ch.avatar?.src, CHARACTER_WIDTHS, PORTRAIT_SIZES)
     }
-  }, [index])
+  }, [group.id])
 
   /**
    * Select a character and hear them. Every failure mode — no profile, no API
@@ -119,12 +113,6 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
     <div
       role="group"
       aria-label="Character roster"
-      onKeyDown={(e) => {
-        const delta = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
-        if (!delta) return
-        e.preventDefault()
-        go(delta)
-      }}
       /* dark scrim: the hero still behind this can be any brightness, and the
        * portrait labels over show artwork are otherwise unreadable. */
       className={`w-fit rounded border border-bone/10 bg-ink-900/70 p-3 backdrop-blur-md ${className}`}
@@ -142,20 +130,6 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
           className={`p-1 transition-colors ${previewOn ? 'text-bone-dim hover:text-bone' : 'text-bone-faint hover:text-bone'}`}
         >
           {previewOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
-        </button>
-        <button
-          onClick={() => go(-1)}
-          aria-label="Previous roster"
-          className="p-1 text-bone-dim transition-colors hover:text-bone"
-        >
-          <ChevronLeft size={15} />
-        </button>
-        <button
-          onClick={() => go(1)}
-          aria-label="Next roster"
-          className="p-1 text-bone-dim transition-colors hover:text-bone"
-        >
-          <ChevronRight size={15} />
         </button>
       </div>
 

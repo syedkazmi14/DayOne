@@ -3,6 +3,7 @@ import { AppShell } from './components/AppShell'
 import { Authoring } from './components/screens/Authoring'
 import { EpisodeIntro } from './components/screens/EpisodeIntro'
 import { Home } from './components/screens/Home'
+import { PickShow } from './components/screens/PickShow'
 import { PlayerProfile } from './components/screens/PlayerProfile'
 import { Results } from './components/screens/Results'
 import { ScenePlayer } from './components/screens/ScenePlayer'
@@ -20,6 +21,7 @@ function SignInScreen() {
 
 const SCREENS = {
   signin: SignInScreen,
+  pickshow: PickShow,
   home: Home,
   intro: EpisodeIntro,
   scene: ScenePlayer,

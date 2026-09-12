@@ -102,6 +102,26 @@ const root = createRoot(document.getElementById('root')!)
 await act(async () => { root.render(React.createElement(App)) })
 await flush(200)
 
+console.log('\n=== 0. ONBOARDING: PICK A SHOW ===')
+const buttonsWith = (s: string) =>
+  [...document.querySelectorAll<HTMLElement>('button')].filter((b) => b.textContent?.includes(s))
+
+ok(has('Pick your show'), 'a signed-in player with no chosen show gets the picker')
+ok(!document.querySelector('header'), 'no app chrome over the picker — nothing to navigate past the question')
+const showTiles = ['Rick and Morty', 'South Park', 'Family Guy', 'The Simpsons'].filter(
+  (n) => buttonsWith(n).length > 0,
+)
+ok(showTiles.length === 4, `all four shows offered (got ${showTiles.length})`)
+ok(
+  [...document.querySelectorAll('button')].filter((b) => b.textContent?.includes('In production')).length === 3,
+  'the three shows with no playable episode say so',
+)
+
+await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(150) })
+await flush(150)
+ok(!has('Pick your show'), 'choosing a show leaves the picker')
+ok(localStorage.getItem('onboard.group.v1') === 'rick-and-morty', 'the choice is persisted, so it is asked once')
+
 console.log('\n=== 1. HOME / EPISODE SELECT ===')
 ok(has('DayOne'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
@@ -120,33 +140,50 @@ const portraits = () => [
 ]
 ok(portraits().length === 4, `four character buttons (got ${portraits().length})`)
 
-// arrows switch roster, and the episode shelf underneath follows
-const nextRoster = switcher!.querySelector<HTMLElement>('button[aria-label="Next roster"]')
-const prevRoster = switcher!.querySelector<HTMLElement>('button[aria-label="Previous roster"]')
-ok(!!nextRoster && !!prevRoster, 'switcher has both arrows')
+ok(!switcher!.querySelector('button[aria-label="Next roster"]'), 'the roster arrows are gone from the hero')
 
-await act(async () => { nextRoster!.click(); await sleep(150) })
-await flush(150)
-ok(has('South Park'), 'next arrow switched to South Park')
-ok(has('THE GROUP CHAT'), 'episode shelf followed the roster')
-ok(!has('THE CLIENT'), 'the previous roster’s episodes left the shelf')
-ok(has('CARTMAN') || has('ERIC'), 'switcher shows the new cast')
+console.log('\n=== 1c. SWITCHING SHOW FROM THE ACCOUNT MENU ===')
+const clickEl = async (el: HTMLElement, ms = 120) => {
+  await act(async () => { el.click(); await sleep(ms) })
+  await flush(ms)
+}
+const openAccountMenu = () =>
+  clickEl(document.querySelector<HTMLElement>('button[aria-label*="account menu"]')!, 80)
+const menuItem = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes(label))
+const showRows = () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
+/** Account menu -> Change show -> the named show. */
+const pickShow = async (name: string) => {
+  await openAccountMenu()
+  await clickEl(menuItem('Change show')!, 80)
+  await clickEl(showRows().find((b) => b.textContent?.includes(name))!, 150)
+}
 
-// keyboard on the switcher
-await act(async () => {
-  switcher!.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
-  await sleep(150)
-})
-await flush(150)
-ok(has('Family Guy') && has('THE CONFIDENT ANSWER'), 'ArrowRight advanced to Family Guy')
+await openAccountMenu()
+ok(!!menuItem('Change show'), 'the account menu offers Change show')
+ok(showRows().length === 0, 'the shows stay behind it — the menu is not four rows of shows')
 
-// wraps around, so two arrows reach every roster
-await act(async () => { nextRoster!.click(); await sleep(120) })
-await flush(120)
-ok(has('The Simpsons') && has('SECTOR 7-G'), 'reached The Simpsons')
-await act(async () => { nextRoster!.click(); await sleep(120) })
-await flush(120)
-ok(has('Rick and Morty') && has('THE CLIENT'), 'wraps back round to Rick and Morty')
+await clickEl(menuItem('Change show')!, 80)
+ok(showRows().length === 4, `opening it lists all four shows (got ${showRows().length})`)
+ok(showRows().filter((b) => b.getAttribute('aria-checked') === 'true').length === 1, 'the current show is marked, exactly once')
+ok(
+  showRows().filter((b) => b.textContent?.includes('In production')).length === 3,
+  'the flyout labels the shows with nothing playable',
+)
+
+await clickEl(showRows().find((b) => b.textContent?.includes('South Park'))!, 150)
+ok(!document.querySelector('[role="menu"]'), 'the menu closes on choosing, even though the view did not change')
+ok(has('South Park'), 'menu switched to South Park')
+ok(has('THE GROUP CHAT'), 'episode shelf followed the show')
+ok(!has('THE CLIENT'), 'the previous show’s episodes left the shelf')
+ok(has('CARTMAN') || has('ERIC'), 'cast strip shows the new cast')
+ok(localStorage.getItem('onboard.group.v1') === 'south-park', 'the new show is persisted too')
+
+await pickShow('The Simpsons')
+ok(has('The Simpsons') && has('SECTOR 7-G'), 'every show is one click away — no cycling')
+
+await pickShow('Rick and Morty')
+ok(has('Rick and Morty') && has('THE CLIENT'), 'back on Rick and Morty')
 
 // selecting a character marks it
 const first = portraits()[0]
