@@ -151,10 +151,8 @@ export function Home() {
           </div>
         )}
 
-        <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
-          <Eyebrow>
-            {group.name} · season one · your training. your choices.
-          </Eyebrow>
+        <div className="mb-6 flex flex-wrap items-baseline gap-3">
+          <h2 className="t-section">Episodes</h2>
           <span className="font-mono text-[10px] text-bone-faint">
             {shelf.filter((e) => state.player.completedEpisodes.includes(e.id)).length} / {shelf.length} complete
           </span>
