@@ -24,7 +24,7 @@ g.localStorage = dom.window.localStorage
  * before every assertion; the gate itself is exercised at the end. */
 dom.window.localStorage.setItem(
   'onboard.session.v1',
-  JSON.stringify({ role: 'employee', provider: 'Okta', signedInAt: Date.now() }),
+  JSON.stringify({ role: 'employee', provider: 'Company SSO', signedInAt: Date.now() }),
 )
 g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16) as unknown as number
 g.cancelAnimationFrame = (id: number) => clearTimeout(id)

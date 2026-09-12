@@ -139,7 +139,7 @@ await page.evaluateOnNewDocument(() => {
   try {
     localStorage.setItem(
       'onboard.session.v1',
-      JSON.stringify({ role: 'employee', provider: 'Okta', signedInAt: Date.now() }),
+      JSON.stringify({ role: 'employee', provider: 'Company SSO', signedInAt: Date.now() }),
     )
   } catch {}
 })

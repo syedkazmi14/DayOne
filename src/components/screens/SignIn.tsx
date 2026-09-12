@@ -1,5 +1,4 @@
 import { motion } from 'framer-motion'
-import { ArrowRight } from 'lucide-react'
 import { useState } from 'react'
 import { Eyebrow } from '../ui/Bits'
 
@@ -7,10 +6,14 @@ import { Eyebrow } from '../ui/Bits'
  * SIGN-IN — the front door. Nobody has played anything yet, so there is no
  * episode art to lean on: this screen is type and one decision, nothing else.
  *
- * It is a fake SSO picker, on purpose and openly. Pick a provider and you're
- * in — no password field exists because nothing here checks one. Say that out
- * loud rather than let the chrome imply otherwise; this codebase doesn't
- * pretend to integrations it doesn't have.
+ * Auth is a stub, openly. Submitting signs you in; so does the SSO button.
+ * Nothing is checked, because there is nothing behind this to check against.
+ *
+ * The credential fields are deliberately UNCONTROLLED and never read — no
+ * state holds them, nothing persists or transmits them, and autoComplete is
+ * off so a password manager never offers to save one. A field that looks like
+ * a login but authenticates nothing is exactly the place someone types their
+ * real work password, so the stub notice stays visible under the form.
  *
  * Employee is the default because that is who almost everyone is. The admin
  * path is a link, not a fork in the road — a company sets up their content
@@ -25,11 +28,8 @@ interface Props {
 
 const EASE = [0.16, 1, 0.3, 1] as const
 
-const PROVIDERS = [
-  { id: 'okta', mark: 'OK', name: 'Okta', blurb: 'Workforce identity, the popular one.' },
-  { id: 'entra', mark: 'ME', name: 'Microsoft Entra', blurb: 'Formerly Azure AD. Still is, really.' },
-  { id: 'workspace', mark: 'GW', name: 'Google Workspace', blurb: "Whatever's on your company email." },
-]
+const FIELD =
+  'w-full border border-bone/12 bg-ink-800 px-4 py-3 font-sans text-[13.5px] text-bone outline-none transition-colors placeholder:text-bone-faint focus:border-signal/50'
 
 export function SignIn({ onSignIn }: Props) {
   const [admin, setAdmin] = useState(false)
@@ -59,7 +59,7 @@ export function SignIn({ onSignIn }: Props) {
           </p>
         </div>
 
-        {/* right: pick a provider and go */}
+        {/* right: sign in and go */}
         <div className="flex flex-col justify-center px-6 py-14 sm:px-12 lg:px-16 lg:py-16">
           <Eyebrow>{admin ? 'company admin' : 'sign in'}</Eyebrow>
 
@@ -69,37 +69,45 @@ export function SignIn({ onSignIn }: Props) {
             </p>
           )}
 
-          <div className="mt-4 space-y-2.5">
-            {PROVIDERS.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => onSignIn(role, p.name)}
-                className="choice group flex w-full items-center gap-4 p-4"
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-bone/15 bg-ink-700 font-mono text-[11px] font-bold uppercase tracking-wide text-bone-dim">
-                  {p.mark}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-sans text-[13.5px] font-medium text-bone">{p.name}</span>
-                  <span className="block font-sans text-[12px] font-light text-bone-faint">{p.blurb}</span>
-                </span>
-                <ArrowRight
-                  size={15}
-                  className="shrink-0 text-bone-faint transition-transform duration-300 group-hover:translate-x-1 group-hover:text-signal"
-                />
-              </button>
-            ))}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              onSignIn(role, 'Email')
+            }}
+            className="mt-4 max-w-sm space-y-2.5"
+          >
+            <input type="email" name="email" placeholder="Work email" autoComplete="off" className={FIELD} />
+            <input type="password" name="password" placeholder="Password" autoComplete="off" className={FIELD} />
+            <button
+              type="submit"
+              className="w-full bg-signal px-4 py-3 font-sans text-[13.5px] font-semibold text-ink-900 transition-colors hover:bg-signal-hot"
+            >
+              Sign in
+            </button>
+          </form>
+
+          <div className="mt-6 flex max-w-sm items-center gap-4">
+            <span className="h-px flex-1 bg-bone/10" />
+            <span className="t-eyebrow">or</span>
+            <span className="h-px flex-1 bg-bone/10" />
           </div>
 
           <button
+            onClick={() => onSignIn(role, 'Company SSO')}
+            className="choice mt-6 max-w-sm px-4 py-3 text-center font-sans text-[13.5px] font-medium text-bone"
+          >
+            Company SSO
+          </button>
+
+          <button
             onClick={() => setAdmin((v) => !v)}
-            className="mt-6 self-start font-sans text-[13px] text-bone-dim underline decoration-bone/25 underline-offset-4 transition-colors hover:text-signal"
+            className="mt-8 self-start font-sans text-[13px] text-bone-dim underline decoration-bone/25 underline-offset-4 transition-colors hover:text-signal"
           >
             {admin ? 'Just here to do your training?' : 'Company admin?'}
           </button>
 
-          <p className="mt-10 font-mono text-[10px] uppercase leading-relaxed tracking-[0.12em] text-bone-faint">
-            auth is stubbed for this prototype — picking a provider signs you in. nothing is verified.
+          <p className="mt-10 max-w-sm font-mono text-[10px] uppercase leading-relaxed tracking-[0.12em] text-bone-faint">
+            auth is stubbed for this prototype. nothing is checked, nothing is stored — do not type a real password.
           </p>
         </div>
       </div>
