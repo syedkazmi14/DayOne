@@ -11,7 +11,8 @@ the characters about what just happened.
 
 ```bash
 npm install
-npm run assets   # fetch character + episode artwork into public/ (once)
+npm run assets   # fetch character + episode artwork into public/ (once);
+                 # also derives the responsive WebP ladder (needs cwebp)
 npm run dev      # http://localhost:5173 — Vite + the voice proxy
 ```
 
@@ -251,9 +252,31 @@ src/
                             PlayerProfile · Authoring (Studio)
 server/voiceProxy.mjs       holds ELEVENLABS_API_KEY; POST /api/voice/tts
 scripts/fetchAssets.mjs     downloads + crops character and episode artwork
-public/characters/*.jpg     640x640, one per character
-public/episodes/*.jpg       1280x720, one per episode
+scripts/optimizeAssets.mjs  derives the responsive WebP ladder beside each JPEG
+public/characters/*.jpg     640x640, one per character (+ -160/-320/-640.webp)
+public/episodes/*.jpg       1280x720, one per episode (+ -640/-1280.webp)
+public/_headers             cache policy for the artwork (Netlify / CF Pages)
 ```
+
+### Artwork delivery
+
+`npm run assets` fetches the baseline JPEGs and then runs `npm run
+assets:optimize`, which writes a WebP ladder next to each one. `CharacterAvatar`
+and `EpisodeStill` render a `<picture>` whose `<source>` offers that ladder with
+a `sizes` hint matching the box being drawn, keeping the JPEG as the `<img src>`
+fallback — so a 62px cast-switcher portrait pulls ~4kB instead of the ~52kB,
+640px JPEG every surface used to share. The optimizer needs `cwebp`
+(`brew install webp`); without it the step is skipped with a notice and the app
+still renders from the JPEGs.
+
+**Deployment:** the artwork lives in `public/`, so Vite copies it verbatim and
+the paths are *not* content-hashed. `public/_headers` sets a one-week
+`Cache-Control` with `stale-while-revalidate` (not `immutable`, which would be
+wrong for unhashed paths that `npm run assets` can rewrite). Netlify and
+Cloudflare Pages read that file; any other host needs the same policy configured
+there. The origin/CDN must also serve `.webp` as `image/webp` and keep `Accept`
+(or the URL) in its cache key.
+
 
 ## Verification
 

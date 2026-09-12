@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { Character } from '@/types'
 import { CharacterPortrait } from './CharacterPortrait'
+import { CHARACTER_WIDTHS, webpSrcSet } from './responsiveImage'
 
 /* ============================================================================
  * CHARACTER AVATAR — artwork first, generated portrait as the safety net.
@@ -13,6 +14,13 @@ import { CharacterPortrait } from './CharacterPortrait'
  *
  * Images are `loading="lazy"` and `decoding="async"`, so a carousel of four
  * rosters does not fetch sixteen files before first paint.
+ *
+ * SIZING: `npm run assets:optimize` writes a 160/320/640 WebP ladder beside
+ * each JPEG, and the `<source>` below hands the browser a `sizes` derived from
+ * the box being drawn. A 62px cast-switcher portrait therefore pulls the 160w
+ * rung (~4kB) instead of the 640px JPEG (~52kB) every surface used to share.
+ * The JPEG stays the `<img src>`, so it remains the fallback and the artwork
+ * is unchanged.
  * ========================================================================== */
 
 interface Props {
@@ -28,17 +36,23 @@ interface Props {
   fill?: boolean
   speaking?: boolean
   dim?: boolean
+  /**
+   * Override the `sizes` hint. Needed when `fill` is set, since the rendered
+   * box then comes from the container rather than from `size`.
+   */
+  sizes?: string
   /** Eager-load the visible group so the first panel has no pop-in. */
   priority?: boolean
   className?: string
   rounded?: string
 }
 
-export function CharacterAvatar({
+export const CharacterAvatar = memo(function CharacterAvatar({
   character,
   size = 160,
   ratio = 1,
   fill = false,
+  sizes,
   speaking = false,
   dim = false,
   priority = false,
@@ -48,6 +62,10 @@ export function CharacterAvatar({
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
+  /* `<picture>` falls back only on a type/media miss, never on a 404 — so a
+   * missing WebP rung (assets fetched without cwebp) would drop straight to the
+   * SVG portrait. Step down to the JPEG first. */
+  const [noWebp, setNoWebp] = useState(false)
   const src = character.avatar?.src
 
   /**
@@ -67,6 +85,7 @@ export function CharacterAvatar({
     // Cold load, or a character swap: do not inherit the previous state.
     setLoaded(false)
     setFailed(false)
+    setNoWebp(false)
   }, [src])
 
   const height = Math.round(size * ratio)
@@ -83,6 +102,11 @@ export function CharacterAvatar({
       </div>
     )
 
+  const srcSet = noWebp ? undefined : webpSrcSet(src, CHARACTER_WIDTHS)
+  /* `fill` surfaces must pass `sizes`: the box then comes from the container,
+   * not from `size`, and a wrong hint would fetch the wrong rung. */
+  const sizesAttr = sizes ?? `${size}px`
+
   return (
     <div
       className={`overflow-hidden ${box} ${rounded} ${className}`}
@@ -96,19 +120,24 @@ export function CharacterAvatar({
           background: `linear-gradient(155deg, ${character.portrait.hue}22, ${character.portrait.hue2}14 55%, #06070A)`,
         }}
       />
-      <img
-        ref={imgRef}
-        src={src}
-        alt={character.avatar?.alt ?? character.name}
-        {...(fill ? {} : { width: size, height })}
-        loading={priority ? 'eager' : 'lazy'}
-        decoding="async"
-        draggable={false}
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
-        className="drag-none relative h-full w-full object-cover transition-opacity duration-500"
-        style={{ objectPosition: character.avatar?.focus ?? '50% 30%', opacity: loaded ? 1 : 0 }}
-      />
+      {/* `contents` keeps the picture box out of layout, so the img stays a
+       *  direct child of the sized frame and h-full/w-full resolve as before. */}
+      <picture className="contents">
+        {srcSet && <source type="image/webp" srcSet={srcSet} sizes={sizesAttr} />}
+        <img
+          ref={imgRef}
+          src={src}
+          alt={character.avatar?.alt ?? character.name}
+          {...(fill ? {} : { width: size, height })}
+          loading={priority ? 'eager' : 'lazy'}
+          decoding="async"
+          draggable={false}
+          onLoad={() => setLoaded(true)}
+          onError={() => (srcSet ? setNoWebp(true) : setFailed(true))}
+          className="drag-none relative h-full w-full object-cover transition-opacity duration-500"
+          style={{ objectPosition: character.avatar?.focus ?? '50% 30%', opacity: loaded ? 1 : 0 }}
+        />
+      </picture>
       {speaking && (
         <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-end gap-[3px]">
           {[0, 1, 2, 3, 4].map((i) => (
@@ -126,4 +155,4 @@ export function CharacterAvatar({
       )}
     </div>
   )
-}
+})

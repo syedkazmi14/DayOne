@@ -5,6 +5,7 @@ import { useGame } from '@/engine/gameStore'
 import type { Character } from '@/types'
 import { speak, stopAllSpeech, type SpeechHandle } from '@/voice/voice'
 import { CharacterAvatar } from './ui/CharacterAvatar'
+import { CHARACTER_WIDTHS, preloadImage } from './ui/responsiveImage'
 
 /* ============================================================================
  * CAST SWITCHER — the compact roster control in the hero corner.
@@ -20,6 +21,10 @@ import { CharacterAvatar } from './ui/CharacterAvatar'
  * ========================================================================== */
 
 const PORTRAIT = 62
+/** The portraits are drawn at PORTRAIT px, so ask for that rung, not the 640px
+ *  master. Shared with the neighbour preload below so both resolve the same
+ *  candidate and the swap is a cache hit. */
+const PORTRAIT_SIZES = `${PORTRAIT}px`
 
 /** Cast names are authored in caps for the cinematic speaker labels; the
  *  picker wants them as names. */
@@ -55,6 +60,17 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
     },
     [],
   )
+
+  /* The arrows wrap, so the roster either side is one click away and its four
+   * portraits are a different set of files. Warm them at low priority. */
+  useEffect(() => {
+    const n = characterGroups.length
+    for (const d of [1, -1]) {
+      for (const ch of groupCast(characterGroups[(index + d + n) % n])) {
+        preloadImage(ch.avatar?.src, CHARACTER_WIDTHS, PORTRAIT_SIZES)
+      }
+    }
+  }, [index])
 
   /**
    * Select a character and hear them. Every failure mode — no profile, no API
@@ -171,6 +187,7 @@ export function CastSwitcher({ className = '' }: { className?: string }) {
                 <CharacterAvatar
                   character={ch}
                   fill
+                  sizes={PORTRAIT_SIZES}
                   priority
                   speaking={speaking}
                   className="transition-transform duration-500 group-hover/card:scale-105"

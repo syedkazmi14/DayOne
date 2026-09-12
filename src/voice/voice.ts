@@ -243,6 +243,7 @@ export async function speak(text: string, ch: Character): Promise<SpeechHandle> 
           voiceId: profile.voiceId,
           fallbackVoiceId: profile.fallbackVoiceId,
           settings: profile.settings,
+          modelId: profile.modelId,
         }),
       })
       if (!res.ok) {

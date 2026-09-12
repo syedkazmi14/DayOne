@@ -1,0 +1,16 @@
+# Cache policy for the static artwork in public/.
+#
+# Netlify and Cloudflare Pages read this file from the deploy root; Vite copies
+# public/ verbatim, so it lands at dist/_headers. Other hosts ignore it — see
+# the deployment note in README.md for the nginx / CloudFront equivalents.
+#
+# These paths are NOT content-hashed (Vite fingerprints src/ imports, not
+# public/), so `immutable` would be wrong: re-running `npm run assets` reuses
+# the same filenames. A week with stale-while-revalidate gets the repeat-visit
+# win without pinning a stale portrait forever.
+
+/characters/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+
+/episodes/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400

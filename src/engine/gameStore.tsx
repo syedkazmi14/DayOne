@@ -383,7 +383,17 @@ interface Store {
   advance: () => void
 }
 
-const Ctx = createContext<Store | null>(null)
+/*
+ * One context object for the life of the page. This module exports a hook
+ * next to a component, so Vite cannot Fast Refresh it: any file event on it —
+ * including a sync client rewriting an unchanged file — re-runs the module, and
+ * a fresh `createContext` here would leave components bound to the old copy
+ * reading a context nobody provides ("useGame must be used inside
+ * <GameProvider>" with GameProvider right above them). Every copy reuses the
+ * first context instead. `import.meta.hot` is undefined in builds and tests.
+ */
+const Ctx: React.Context<Store | null> = import.meta.hot?.data.gameCtx ?? createContext<Store | null>(null)
+if (import.meta.hot) import.meta.hot.data.gameCtx = Ctx
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, initialState)

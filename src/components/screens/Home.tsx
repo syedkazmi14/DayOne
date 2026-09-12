@@ -1,10 +1,13 @@
+import { useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Lock, Play } from 'lucide-react'
 import { episodesForGroup, featuredEpisode } from '@/content/episodes'
+import { getCharacter } from '@/content/characters'
 import { useGame } from '@/engine/gameStore'
 import { overallKnowledge } from '@/engine/adaptive'
 import { CastSwitcher } from '../CastSwitcher'
 import { EpisodeStill } from '../ui/EpisodeStill'
+import { CHARACTER_WIDTHS, preloadImage } from '../ui/responsiveImage'
 
 /* ============================================================================
  * The lobby. First impression has to read "interactive show", not "LMS".
@@ -24,6 +27,15 @@ export function Home() {
   const shelf = episodesForGroup(group.id)
   const know = Math.round(overallKnowledge(state.player.mastery) * 100)
   const playable = featured && !featured.locked
+
+  /* Starting the featured episode goes straight to the intro screen, whose cast
+   * strip draws these four at 58px — a rung nothing on this screen has loaded.
+   * Warm it here so that screen paints with art instead of fading it in. (Its
+   * hero still is the one already behind this screen, so that is free.) */
+  const castIds = featured?.cast
+  useEffect(() => {
+    for (const id of castIds ?? []) preloadImage(getCharacter(id).avatar?.src, CHARACTER_WIDTHS, '58px')
+  }, [castIds])
 
   return (
     <div className="relative h-full overflow-y-auto">

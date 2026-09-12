@@ -38,6 +38,8 @@ export interface VoiceProfile {
   voiceId: string
   /** Premade stand-in, available on every plan. Used if `voiceId` is refused. */
   fallbackVoiceId?: string
+  /** Override the server's default TTS model for this voice specifically. */
+  modelId?: string
   /** Human note on why this voice was cast, for whoever re-casts it later. */
   casting?: string
   settings: VoiceSettings
@@ -67,25 +69,27 @@ export const DEFAULT_VOICE_PROFILE_ID = 'narrator'
 
 export const voiceProfiles: Record<string, VoiceProfile> = {
   /* ------------------------------------------------------ Rick and Morty */
-  rick: profile('rick', 'Dr. Von — quirky, eccentric, mad-scientist', 'yjJ45q8TVCrtMhEKurxY', { rate: 1.12, pitch: 0.82 }, {
+  rick: profile('rick', 'Dr. Von — quirky, eccentric, mad-scientist', '57FpZFPShw2KfPbjIOGF', { rate: 1.12, pitch: 0.82 }, {
     fallbackVoiceId: 'N2lVS1w4EtoT3dr4eOWO', // Callum — husky trickster
     casting: 'Burnt-out genius: manic, contemptuous, no patience for a sentence he did not start. Low stability keeps the delivery unpredictable.',
-    settings: { stability: 0.3, similarity_boost: 0.7, style: 0.6 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
   }),
-  morty: profile('morty', 'Timmy — anxious, nasal, stuttering', 'mrQhZWGbb2k9qWJb5qeA', { rate: 1.02, pitch: 1.24 }, {
+  morty: profile('morty', 'Timmy — anxious, nasal, stuttering', 'b3EsWgN6HTkTPLKdAn1D', { rate: 1.02, pitch: 1.24 }, {
     fallbackVoiceId: 'bIHbv24MWmeRgasZH58o', // Will — relaxed optimist
     casting: 'Anxious teenager who apologises mid-sentence. The stutter in this voice is the whole reason it was cast.',
-    settings: { stability: 0.5, similarity_boost: 0.8, style: 0.4 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
+    modelId: 'eleven_multilingual_v2', // this clone needs the fidelity model — thin/off on the fast model
   }),
-  summer: profile('summer', 'Briony — dry Southern California valley girl', 'hv8WzBOrsvuSUeIQGOCM', { rate: 1.08, pitch: 1.1 }, {
+  summer: profile('summer', 'Briony — dry Southern California valley girl', '7yywlS3r48uNAvlq7pqA', { rate: 1.08, pitch: 1.1 }, {
     fallbackVoiceId: 'FGY2WhTYpPnrIDTdsKH5', // Laura — quirky, sassy
     casting: 'Unbothered teenager who is right and knows it. Dry, not shrill.',
-    settings: { stability: 0.45, similarity_boost: 0.78, style: 0.4 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
+    modelId: 'eleven_multilingual_v2', // this clone needs the fidelity model — thin/off on the fast model
   }),
-  jerry: profile('jerry', 'Odd Todd — nervous, over-earnest', 'SDARFhQygpPvpLh7Ad1B', { rate: 0.98, pitch: 1.04 }, {
+  jerry: profile('jerry', 'Odd Todd — nervous, over-earnest', 'm1vFFxFUahz0XVQz4bxA', { rate: 0.98, pitch: 1.04 }, {
     fallbackVoiceId: 'iP95p4xoKVk53GoZ742B', // Chris — casual, down-to-earth
     casting: 'Means well, over-explains, wants you to say he did fine.',
-    settings: { stability: 0.55, similarity_boost: 0.78, style: 0.3 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
   }),
 
   /* ----------------------------------------------------------- South Park */
