@@ -35,7 +35,22 @@ import { validateEpisode } from './validateEpisode'
  * refuses any graph that fails validation — so nothing unvalidated is playable.
  * ========================================================================== */
 
-export type View = 'home' | 'intro' | 'scene' | 'profile' | 'shop' | 'authoring' | 'results'
+export type View = 'signin' | 'home' | 'intro' | 'scene' | 'profile' | 'shop' | 'authoring' | 'results'
+
+/**
+ * Who is using the app. Auth is a deliberate prototype stub — picking a
+ * provider on the sign-in screen IS the sign-in. Nothing here is a credential
+ * and nothing is verified; it exists to route employees to the lobby and
+ * admins to the Studio, and to keep that choice across reloads.
+ */
+export type SessionRole = 'employee' | 'admin'
+
+export interface Session {
+  role: SessionRole
+  /** Display name of the fake IdP, e.g. 'Okta'. Shown, never checked. */
+  provider: string
+  signedInAt: number
+}
 export type Phase = 'dialogue' | 'wager' | 'choices' | 'outcome' | 'ending'
 
 export interface Adaptation {
@@ -46,6 +61,8 @@ export interface Adaptation {
 
 export interface GameState {
   view: View
+  /** Null until signed in; the app renders the sign-in screen while it is. */
+  session: Session | null
   player: PlayerState
   /** Which roster panel the home carousel is resting on. */
   groupId: string
@@ -76,6 +93,40 @@ export interface GameState {
 
 const STORAGE_KEY = 'onboard.player.v1'
 const PUBLISHED_KEY = 'onboard.published.v1'
+const SESSION_KEY = 'onboard.session.v1'
+
+function loadSession(): Session | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Session
+    // Storage is not a trust boundary: an unknown role falls back to the least
+    // privileged one rather than being taken at face value.
+    if (parsed?.role !== 'employee' && parsed?.role !== 'admin') return null
+    return { role: parsed.role, provider: String(parsed.provider ?? ''), signedInAt: Number(parsed.signedInAt) || Date.now() }
+  } catch {
+    return null
+  }
+}
+
+const saveSession = (sn: Session) => {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(sn))
+  } catch {
+    /* private mode — the session lasts for this tab only */
+  }
+}
+
+const clearSession = () => {
+  try {
+    localStorage.removeItem(SESSION_KEY)
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/** Where each role belongs once signed in. */
+const landingFor = (role: SessionRole): View => (role === 'admin' ? 'authoring' : 'home')
 
 function loadPlayer(): PlayerState {
   const fresh: PlayerState = {
@@ -133,8 +184,11 @@ const savePublished = (eps: Record<string, Episode>) => {
   }
 }
 
-export const initialState = (): GameState => ({
-  view: 'home',
+export const initialState = (): GameState => {
+  const session = loadSession()
+  return {
+  view: session ? landingFor(session.role) : 'signin',
+  session,
   player: loadPlayer(),
   groupId: DEFAULT_GROUP_ID,
   selectedCharacterId: null,
@@ -154,10 +208,13 @@ export const initialState = (): GameState => ({
   questionsAsked: 0,
   finalScore: null,
   creditsDelta: 0,
-})
+  }
+}
 
 export type Action =
   | { type: 'GOTO'; view: View }
+  | { type: 'SIGN_IN'; role: SessionRole; provider: string }
+  | { type: 'SIGN_OUT' }
   | { type: 'SELECT_GROUP'; groupId: string }
   | { type: 'SELECT_CHARACTER'; characterId: string }
   | { type: 'SELECT_EPISODE'; episodeId: string }
@@ -228,7 +285,22 @@ export function reducer(state: GameState, action: Action): GameState {
 
   switch (action.type) {
     case 'GOTO':
+      /* Every destination is behind the sign-in gate. */
+      if (!state.session) return state
       return { ...state, view: action.view }
+
+    case 'SIGN_IN': {
+      const session: Session = { role: action.role, provider: action.provider, signedInAt: Date.now() }
+      saveSession(session)
+      return { ...state, session, view: landingFor(action.role) }
+    }
+
+    case 'SIGN_OUT': {
+      clearSession()
+      /* Progression and published content survive — this is a role switch, not
+       * a wipe. RESET_PROGRESS is the destructive one. */
+      return { ...state, session: null, view: 'signin' }
+    }
 
     case 'SELECT_GROUP': {
       const group = getGroup(action.groupId)

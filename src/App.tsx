@@ -7,9 +7,19 @@ import { PlayerProfile } from './components/screens/PlayerProfile'
 import { Results } from './components/screens/Results'
 import { ScenePlayer } from './components/screens/ScenePlayer'
 import { Shop } from './components/screens/Shop'
+import { SignIn } from './components/screens/SignIn'
 import { GameProvider, useGame } from './engine/gameStore'
 
+/* Adapts the presentational SignIn to the reducer, so the SCREENS map can stay
+ * a plain view->component lookup and sign-in gets the same transition as every
+ * other screen. */
+function SignInScreen() {
+  const { dispatch } = useGame()
+  return <SignIn onSignIn={(role, provider) => dispatch({ type: 'SIGN_IN', role, provider })} />
+}
+
 const SCREENS = {
+  signin: SignInScreen,
   home: Home,
   intro: EpisodeIntro,
   scene: ScenePlayer,
@@ -21,12 +31,15 @@ const SCREENS = {
 
 function Router() {
   const { state } = useGame()
-  const Screen = SCREENS[state.view]
+  /* The gate is enforced here as well as in the reducer: no session, no screen
+   * but sign-in, whatever `view` happens to say. */
+  const view = state.session ? state.view : 'signin'
+  const Screen = SCREENS[view]
   return (
     <AppShell>
       <AnimatePresence mode="wait">
         <motion.div
-          key={state.view}
+          key={view}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

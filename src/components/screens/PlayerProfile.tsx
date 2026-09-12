@@ -32,6 +32,7 @@ function standing(m: Mastery): string {
 
 export function PlayerProfile() {
   const { state, dispatch } = useGame()
+  const session = state.session
   const p = state.player
   const overall = overallKnowledge(p.mastery)
   const weak = weakestConcept(p.mastery)
@@ -205,12 +206,26 @@ export function PlayerProfile() {
         {/* account */}
         <section className="mt-24 border-t border-bone/8 pt-8">
           <h2 className="font-sans text-[14px] font-medium text-bone-dim">Account</h2>
-          <button
-            onClick={() => dispatch({ type: 'RESET_PROGRESS' })}
-            className="mt-3 font-sans text-[13px] text-bone-faint underline decoration-bone/20 underline-offset-4 transition-colors hover:text-danger"
-          >
-            Reset progression
-          </button>
+          <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <button
+              onClick={() => dispatch({ type: 'SIGN_OUT' })}
+              className="font-sans text-[13px] text-bone-faint underline decoration-bone/20 underline-offset-4 transition-colors hover:text-bone"
+            >
+              Sign out
+            </button>
+            <button
+              onClick={() => dispatch({ type: 'RESET_PROGRESS' })}
+              className="font-sans text-[13px] text-bone-faint underline decoration-bone/20 underline-offset-4 transition-colors hover:text-danger"
+            >
+              Reset progression
+            </button>
+          </div>
+          {session && (
+            <p className="mt-3 font-sans text-[12.5px] font-light text-bone-faint">
+              Signed in as {session.role === 'admin' ? 'an administrator' : 'an employee'} via {session.provider}. Signing
+              out keeps everything you have earned.
+            </p>
+          )}
         </section>
       </div>
     </div>
