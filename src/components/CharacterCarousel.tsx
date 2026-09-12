@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, Loader2, Volume2, VolumeX } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { characterGroups, groupCast } from '@/content/characterGroups'
 import { useGame } from '@/engine/gameStore'
 import type { Character, CharacterGroup } from '@/types'
@@ -8,6 +8,7 @@ import { speak, stopAllSpeech, type SpeechHandle } from '@/voice/voice'
 import { resolveVoiceProfile } from '@/voice/voiceProfiles'
 import { Eyebrow } from './ui/Bits'
 import { CharacterAvatar } from './ui/CharacterAvatar'
+import { CHARACTER_WIDTHS, preloadImage } from './ui/responsiveImage'
 
 /* ============================================================================
  * ROSTER CAROUSEL
@@ -33,6 +34,10 @@ import { CharacterAvatar } from './ui/CharacterAvatar'
  * ========================================================================== */
 
 const SNAP_EPSILON = 8
+
+/** Roster cards: 4-up from lg, 2-up below. Shared with the neighbour preload
+ *  so the warmed candidate is the one the card will actually ask for. */
+const ROSTER_CARD_SIZES = '(min-width: 1024px) 25vw, 48vw'
 
 export function CharacterCarousel() {
   const { state, dispatch } = useGame()
@@ -148,7 +153,6 @@ export function CharacterCarousel() {
     scrollToIndex(Math.round(track.current.scrollLeft / width))
   }
   /** Suppresses the click that would otherwise fire at the end of a drag. */
-  const swallowClick = () => !!drag.current?.moved
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowRight') {
@@ -219,6 +223,27 @@ export function CharacterCarousel() {
       return !v
     })
   }
+
+  /* The panel either side is one swipe away and its four cards are lazy, so
+   * they would otherwise start downloading only once the swipe lands. Warm
+   * them at low priority when the carousel settles. */
+  useEffect(() => {
+    for (const i of [index + 1, index - 1]) {
+      const g = characterGroups[i]
+      if (!g) continue
+      for (const ch of groupCast(g)) preloadImage(ch.avatar?.src, CHARACTER_WIDTHS, ROSTER_CARD_SIZES)
+    }
+  }, [index])
+
+  /* Stable identity, so a memoised GroupPanel does not re-render (and with it
+   * all four avatars) every time a drag or scroll updates local state. */
+  const onSelect = useCallback(
+    (ch: Character) => {
+      if (drag.current?.moved) return
+      void select(ch)
+    },
+    [select],
+  )
 
   const active = characterGroups[index]
 
@@ -292,10 +317,7 @@ export function CharacterCarousel() {
             selectedId={state.selectedCharacterId}
             speakingId={speakingId}
             loadingId={loadingId}
-            onSelect={(ch) => {
-              if (swallowClick()) return
-              void select(ch)
-            }}
+            onSelect={onSelect}
           />
         ))}
       </div>
@@ -362,7 +384,15 @@ interface PanelProps {
   onSelect: (ch: Character) => void
 }
 
-function GroupPanel({ group, visible, priority, selectedId, speakingId, loadingId, onSelect }: PanelProps) {
+const GroupPanel = memo(function GroupPanel({
+  group,
+  visible,
+  priority,
+  selectedId,
+  speakingId,
+  loadingId,
+  onSelect,
+}: PanelProps) {
   const cast = useMemo(() => groupCast(group), [group])
 
   return (
@@ -420,6 +450,7 @@ function GroupPanel({ group, visible, priority, selectedId, speakingId, loadingI
                   <CharacterAvatar
                     character={ch}
                     fill
+                    sizes={ROSTER_CARD_SIZES}
                     priority={priority}
                     speaking={speaking}
                     className="transition-transform duration-700 group-hover:scale-[1.05]"
@@ -462,4 +493,4 @@ function GroupPanel({ group, visible, priority, selectedId, speakingId, loadingI
       </div>
     </div>
   )
-}
+})

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Clock, Lock, Play } from 'lucide-react'
 import { episodesForGroup, featuredEpisode } from '@/content/episodes'
@@ -8,6 +9,7 @@ import { CharacterCarousel } from '../CharacterCarousel'
 import { Chip, Eyebrow } from '../ui/Bits'
 import { CharacterAvatar } from '../ui/CharacterAvatar'
 import { EpisodeStill } from '../ui/EpisodeStill'
+import { CHARACTER_WIDTHS, preloadImage } from '../ui/responsiveImage'
 
 /* ============================================================================
  * The lobby. First impression has to read "interactive show", not "LMS".
@@ -23,6 +25,15 @@ export function Home() {
   const shelf = episodesForGroup(group.id)
   const know = Math.round(overallKnowledge(state.player.mastery) * 100)
   const playable = featured && !featured.locked
+
+  /* Starting the featured episode goes straight to the intro screen, whose
+   * cast strip is the first thing that needs art. Those avatars are drawn at
+   * 58px there, so this warms the same small rung the intro will ask for — the
+   * hero still it also shows is already the one loaded behind this screen. */
+  const castIds = featured?.cast
+  useEffect(() => {
+    for (const id of castIds ?? []) preloadImage(getCharacter(id).avatar?.src, CHARACTER_WIDTHS, '58px')
+  }, [castIds])
 
   return (
     <div className="relative h-full overflow-y-auto">
