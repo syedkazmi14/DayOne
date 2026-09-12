@@ -12,6 +12,8 @@ export interface MediaHealth {
   video: { configured: boolean; provider: string; model: string }
   image: { configured: boolean; provider: string; model: string }
   audio: { configured: boolean; provider: string }
+  /** Whether uploaded documents and extracted knowledge persist across a reload. */
+  content: { configured: boolean; kind: string }
   storage: { kind: string; layout: string }
 }
 
@@ -33,7 +35,7 @@ export function subscribeMediaStatus(listener: () => void): () => void {
 
 const isHealth = (v: unknown): v is MediaHealth => {
   const h = v as MediaHealth
-  return !!h && typeof h === 'object' && !!h.video && !!h.image && !!h.audio && !!h.storage
+  return !!h && typeof h === 'object' && !!h.video && !!h.image && !!h.audio && !!h.content && !!h.storage
 }
 
 export function probeMediaServer(): Promise<MediaHealth | null> {

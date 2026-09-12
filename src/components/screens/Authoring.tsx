@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { ArrowLeft, FileText, Film, Layers, Play, Presentation, Rocket, ShieldCheck, Upload, Wand2 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { runKnowledgeAgent, STAGES, type PipelineStage } from '@/ai/knowledgeAgent'
 import {
   customTopic,
@@ -17,9 +17,11 @@ import {
 import { isLive, llmLabel, llmMode } from '@/ai/llm'
 import { conceptLabel } from '@/content/knowledge'
 import { sourceDocs } from '@/content/sourceDocs'
+import { contentStore, contentStoreLabel } from '@/data/contentStore'
 import { validateEpisode } from '@/engine/validateEpisode'
 import { useGame } from '@/engine/gameStore'
 import { ParseError, parseFile, SUPPORTED_EXTENSIONS } from '@/ingest/parse'
+import { probeMediaServer } from '@/media/mediaStatus'
 import { storeSourceDoc } from '@/media/storage'
 import { useMediaStatus } from '@/media/useMediaStatus'
 import { sttTier, ttsTier, voiceLabel } from '@/voice/voice'
@@ -73,6 +75,31 @@ export function Authoring() {
   const docs = [...sourceDocs, ...uploads]
   const report = useMemo(() => (draft ? validateEpisode(draft) : null), [draft])
 
+  /* Restore a prior Studio session once the media server confirms it can
+   * persist content — before that, `contentStore()` is still the static,
+   * read-only bundle, and skipping the load leaves this screen exactly as it
+   * behaves today with no media server running. */
+  useEffect(() => {
+    void (async () => {
+      await probeMediaServer()
+      if (contentStore().kind !== 'db') return
+      try {
+        const [persistedDocs, persistedItems] = await Promise.all([
+          contentStore().listSourceDocs(),
+          contentStore().listKnowledge(),
+        ])
+        if (persistedDocs.length) setUploads(persistedDocs)
+        if (persistedItems.length) {
+          setExtracted(persistedItems)
+          setRan(true)
+        }
+      } catch {
+        /* Nothing persisted yet, or the server dropped mid-request — Studio
+         * still starts from a clean slate, same as without a media server. */
+      }
+    })()
+  }, [])
+
   const resetEpisode = () => {
     setResult(null)
     setDraft(null)
@@ -88,6 +115,13 @@ export function Authoring() {
       const doc = await parseFile(file)
       setUploads((u) => [...u.filter((d) => d.id !== doc.id), doc])
       const key = await storeSourceDoc(doc)
+      // Best-effort: the static store refuses writes (no media server), and
+      // that must not take the upload down — it just will not survive reload.
+      try {
+        await contentStore().saveSourceDoc(doc)
+      } catch {
+        /* static store, or the server dropped — doc still stands for this session */
+      }
       setUploadNote(
         `${doc.name} parsed · ${doc.excerpt.split(/\s+/).length} words · ${key ? `stored at ${key}` : 'not stored (no media server) — kept for this session'}`,
       )
@@ -102,10 +136,12 @@ export function Authoring() {
     setYieldByDoc({})
     setTopic(null)
     resetEpisode()
+    const collected: KnowledgeItem[] = []
     for await (const ev of runKnowledgeAgent(docs, { speed: 2.4 })) {
       if (ev.type === 'stage') setStage({ doc: ev.doc?.name, id: ev.stage })
       if (ev.type === 'item' && ev.item && ev.doc) {
         const { item, doc } = ev
+        collected.push(item)
         setExtracted((prev) => (prev.some((k) => k.id === item.id) ? prev : [...prev, item]))
         setYieldByDoc((y) => ({ ...y, [doc.id]: (y[doc.id] ?? 0) + 1 }))
       }
@@ -113,6 +149,14 @@ export function Authoring() {
     setStage({})
     setRunning(false)
     setRan(true)
+    if (collected.length) {
+      try {
+        await contentStore().saveKnowledge(collected)
+      } catch {
+        /* static store, or the server dropped — extraction still powers
+         * episode generation below, it just will not survive a reload */
+      }
+    }
   }
 
   async function generate() {
@@ -216,6 +260,16 @@ export function Authoring() {
                 : 'No media server running — generated assets live in this session only.'
             }
             tone={health ? 'good' : 'neutral'}
+          />
+          <StatusCard
+            title="knowledge persistence"
+            value={contentStoreLabel()}
+            detail={
+              contentStore().kind === 'db'
+                ? 'Uploads and extracted rules survive a reload — stored in the media server’s local database.'
+                : 'No media server running — uploads and extraction live in this session only, and are lost on reload.'
+            }
+            tone={contentStore().kind === 'db' ? 'good' : 'neutral'}
           />
         </div>
 

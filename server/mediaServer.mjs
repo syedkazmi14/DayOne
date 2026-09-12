@@ -19,6 +19,13 @@
  * /api/media/assets/<key>. The keys are object-store keys on purpose: pointing
  * putObject() at S3/R2/GCS is a change to one function, not to the app.
  *
+ * It also backs src/data/contentStore.ts's 'db' tier: uploaded documents and
+ * the knowledge the Studio extracts from them, in a small SQLite file
+ * (CONTENT_DB_PATH, default ./data/content.db, via node:sqlite — built into
+ * Node 22.5+, no dependency). This is the one thing here that needs no
+ * external account at all: without REPLICATE_API_TOKEN the server still runs,
+ * still persists content, and only video/image generation stay unconfigured.
+ *
  * Nobody playing an episode ever waits on this server. Without the token,
  * /health reports video and image unconfigured and the app renders procedural
  * previs, labelled as such.
@@ -42,12 +49,17 @@
  *   POST /api/media/audio        { episodeId, sceneId, lineIndex, text, voiceId, fallbackVoiceId?, settings? }
  *   POST /api/media/knowledge    { docId, text } -> { url, storageKey }
  *   GET  /api/media/assets/<key>
+ *   GET  /api/media/content/docs       -> { docs: SourceDoc[] }
+ *   POST /api/media/content/docs       one SourceDoc -> { ok }
+ *   GET  /api/media/content/knowledge  -> { items: KnowledgeItem[] }
+ *   POST /api/media/content/knowledge  { items: KnowledgeItem[] } -> { ok, saved }
  * ========================================================================== */
 
 import { createServer } from 'node:http'
-import { createReadStream } from 'node:fs'
+import { createReadStream, mkdirSync } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -60,6 +72,9 @@ const IMAGE_MODEL = process.env.REPLICATE_IMAGE_MODEL ?? 'black-forest-labs/flux
 const VOICE_PROXY = (process.env.VOICE_PROXY_URL ?? `http://localhost:${process.env.VOICE_PROXY_PORT ?? 8787}`).replace(/\/$/, '')
 const ASSET_ROOT = path.resolve(ROOT, process.env.ASSET_ROOT ?? 'storage')
 const EXTRA_ORIGIN = process.env.MEDIA_SERVER_ORIGIN ?? ''
+/** Structured content (uploaded docs + extracted knowledge), separate from
+ *  the binary asset store above — a row, not an object, is the natural unit. */
+const CONTENT_DB_PATH = path.resolve(ROOT, 'data/content.db')
 
 const PUBLIC_PREFIX = '/api/media/assets/'
 const UPSTREAM_TIMEOUT_MS = 90_000
@@ -153,6 +168,37 @@ async function putObject(key, buffer) {
   await writeFile(file, buffer)
   return `${PUBLIC_PREFIX}${key}`
 }
+
+/* ------------------------------------------------------------- content db */
+
+/**
+ * Uploaded source documents and the knowledge extracted from them, so a
+ * Studio session survives a reload. Backed by node:sqlite (built into Node
+ * 22.5+, no dependency) rather than the object store above — this is a
+ * handful of small JSON rows queried by id, not a binary blob served by URL.
+ *
+ * One file, two tables, each row a JSON blob keyed by the domain id. This
+ * mirrors src/data/contentStore.ts's ContentStore shape exactly, so the
+ * server has no opinions about what a KnowledgeItem or SourceDoc contains.
+ */
+mkdirSync(path.dirname(CONTENT_DB_PATH), { recursive: true })
+const contentDb = new DatabaseSync(CONTENT_DB_PATH)
+contentDb.exec(`
+  CREATE TABLE IF NOT EXISTS source_docs (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS knowledge_items (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+`)
+
+/** node:sqlite prepares against a fixed SQL string, so each table gets its own statement. */
+const upsertSourceDoc = contentDb.prepare(
+  'INSERT INTO source_docs (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
+)
+const upsertKnowledgeItem = contentDb.prepare(
+  'INSERT INTO knowledge_items (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
+)
+const selectSourceDocs = contentDb.prepare('SELECT data FROM source_docs ORDER BY updated_at ASC')
+const selectKnowledgeItems = contentDb.prepare('SELECT data FROM knowledge_items ORDER BY updated_at ASC')
+
+const listRows = (stmt) => stmt.all().map((r) => JSON.parse(r.data))
 
 async function serveAsset(req, res, key) {
   const file = inRoot(key)
@@ -335,8 +381,18 @@ const server = createServer(async (req, res) => {
         video: { configured: !!TOKEN, provider: 'replicate', model: VIDEO_MODEL, mode: 'image-to-video' },
         image: { configured: !!TOKEN, provider: 'replicate', model: IMAGE_MODEL },
         audio: { configured: await voiceConfigured(), provider: 'elevenlabs via voice proxy' },
+        // Content persistence needs nothing beyond this process being up — no
+        // token, no external account — so it is configured whenever this
+        // server answers at all.
+        content: { configured: true, kind: 'sqlite' },
         storage: { kind: 'local-disk', layout: 'company/{knowledge,episodes/<id>/{videos,backgrounds,audio}}' },
       })
+
+    if (req.method === 'GET' && p === '/api/media/content/docs')
+      return json(res, 200, { docs: listRows(selectSourceDocs) })
+
+    if (req.method === 'GET' && p === '/api/media/content/knowledge')
+      return json(res, 200, { items: listRows(selectKnowledgeItems) })
 
     if (req.method === 'GET' && p.startsWith(PUBLIC_PREFIX))
       return serveAsset(req, res, decodeURIComponent(p.slice(PUBLIC_PREFIX.length)))
@@ -357,6 +413,28 @@ const server = createServer(async (req, res) => {
       if (!docId || !text) return json(res, 400, { error: 'invalid_request' })
       const storageKey = keys.knowledge(docId)
       return json(res, 200, { url: await putObject(storageKey, Buffer.from(text, 'utf8')), storageKey })
+    }
+
+    /* Structured content: a whole SourceDoc / KnowledgeItem, stored as-is —
+     * this server takes no view on what those shapes contain. */
+    if (p === '/api/media/content/docs') {
+      const id = safeId(body.id)
+      if (!id || typeof body.name !== 'string') return json(res, 400, { error: 'invalid_request' })
+      upsertSourceDoc.run(id, JSON.stringify(body), new Date().toISOString())
+      return json(res, 200, { ok: true })
+    }
+
+    if (p === '/api/media/content/knowledge') {
+      if (!Array.isArray(body.items)) return json(res, 400, { error: 'invalid_request' })
+      const now = new Date().toISOString()
+      let saved = 0
+      for (const item of body.items) {
+        const id = safeId(item?.id)
+        if (!id) continue
+        upsertKnowledgeItem.run(id, JSON.stringify(item), now)
+        saved++
+      }
+      return json(res, 200, { ok: true, saved })
     }
 
     if (p === '/api/media/image') {
@@ -448,6 +526,7 @@ server.listen(PORT, () => {
   console.log(
     `[media] server on http://localhost:${PORT}  ` +
       (TOKEN ? `replicate configured · video ${VIDEO_MODEL} (image-to-video) · image ${IMAGE_MODEL}` : 'REPLICATE_API_TOKEN not set — Studio will use procedural previs') +
-      `  · storage ${path.relative(ROOT, ASSET_ROOT) || '.'}/`,
+      `  · storage ${path.relative(ROOT, ASSET_ROOT) || '.'}/` +
+      `  · content ${path.relative(ROOT, CONTENT_DB_PATH)}`,
   )
 })
