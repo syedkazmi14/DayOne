@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, Play, Sparkles } from 'lucide-react'
+import { ArrowLeft, Play, Sparkles, Wand2 } from 'lucide-react'
 import { getCharacter } from '@/content/characters'
 import { conceptLabel } from '@/content/knowledge'
 import { useGame } from '@/engine/gameStore'
@@ -58,6 +58,17 @@ export function EpisodeIntro() {
                   <Chip key={c}>{conceptLabel(c)}</Chip>
                 ))}
               </div>
+
+              {episode.provenance && (
+                <div className="mt-6 flex max-w-xl items-start gap-2.5 border-l-2 border-cyan/40 pl-3">
+                  <Wand2 size={12} className="mt-0.5 shrink-0 text-cyan" />
+                  <p className="font-mono text-[10px] uppercase leading-relaxed tracking-[0.12em] text-bone-faint">
+                    generated episode · {episode.provenance.knowledgeIds.length} company rules ·{' '}
+                    {episode.provenance.generator === 'llm' ? `script by ${episode.provenance.model}` : 'deterministic composer'} ·{' '}
+                    {episode.provenance.difficulty} difficulty · validated graph
+                  </p>
+                </div>
+              )}
 
               {focus && (
                 <motion.div

@@ -1,98 +1,156 @@
-import { motion, AnimatePresence } from 'framer-motion'
-import { useRef, useState } from 'react'
+import { motion } from 'framer-motion'
+import { ArrowLeft, FileText, Film, Layers, Play, Presentation, Rocket, ShieldCheck, Upload, Wand2 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 import { runKnowledgeAgent, STAGES, type PipelineStage } from '@/ai/knowledgeAgent'
-import { generateScenario, requestClip, VIDEO_PIPELINE_STAGES, type ScenarioDraft } from '@/ai/scenarioGenerator'
-import { llmLabel, llmMode } from '@/ai/llm'
-import { ttsTier, sttTier, voiceLabel } from '@/voice/voice'
-import { firstDay } from '@/content/episodes'
-import { groupCast } from '@/content/characterGroups'
-import { concepts } from '@/content/knowledge'
+import {
+  customTopic,
+  GEN_STAGES,
+  generateEpisode,
+  MIN_RULES,
+  selectKnowledge,
+  TOPICS,
+  TopicNotCovered,
+  type GenerateResult,
+  type GenStage,
+  type TopicDef,
+} from '@/ai/episodeGenerator'
+import { isLive, llmLabel, llmMode } from '@/ai/llm'
+import { conceptLabel } from '@/content/knowledge'
 import { sourceDocs } from '@/content/sourceDocs'
-import { parseFile, ParseError, SUPPORTED_EXTENSIONS } from '@/ingest/parse'
-import type { KnowledgeItem, SourceDoc } from '@/types'
+import { validateEpisode } from '@/engine/validateEpisode'
 import { useGame } from '@/engine/gameStore'
+import { ParseError, parseFile, SUPPORTED_EXTENSIONS } from '@/ingest/parse'
+import { storeSourceDoc } from '@/media/storage'
+import { useMediaStatus } from '@/media/useMediaStatus'
+import { sttTier, ttsTier, voiceLabel } from '@/voice/voice'
+import type { Episode, KnowledgeItem, SourceDoc } from '@/types'
+import { VideoAssets, VisualAssets, VoiceAssets } from '../studio/AssetStudio'
+import { GraphReview } from '../studio/GraphReview'
+import { PlayerLensPanel } from '../studio/PlayerLensPanel'
+import { Pipeline, StatusCard, Step, type StepState } from '../studio/StudioBits'
+import { Btn, Chip, Eyebrow, Rule } from '../ui/Bits'
 
 /* ============================================================================
  * STUDIO — the authoring workspace.
  *
- * Company material in, episode out. Everything on this screen runs at authoring
- * time; the employee-facing game plays a finished graph, so no employee ever
- * waits on a model and no model can invent a branch that does not exist.
+ *   1 company knowledge   2 topic   3 generate   4 review graph
+ *   5 visual assets       6 voice   7 player lens   8 preview + publish
  *
- * That boundary is a real constraint, not a talking point, so it lives in
- * Advanced alongside the provider tiers rather than on the front of the screen.
+ * Everything on this screen runs before anyone plays. The employee-facing game
+ * plays the finished, validated graph and never calls any of this at runtime.
  * ========================================================================== */
 
-const LENGTHS = ['4–6 minutes', '6–8 minutes', '8–10 minutes']
-
-/** The six pipeline stages, told as the three things an author is waiting for. */
-const PROGRESS_STEPS: { label: string; stages: PipelineStage[] }[] = [
-  { label: 'Reading source material', stages: ['parse', 'segment'] },
-  { label: 'Building scenarios', stages: ['extract', 'normalise'] },
-  { label: 'Creating decision paths', stages: ['link', 'validate'] },
-]
-
-const docMeta = (d: SourceDoc) =>
-  d.type === 'video' ? '31 min' : d.type === 'slides' ? `${d.pages} slides` : `${d.pages} pages`
+const DOC_ICON = {
+  pdf: FileText,
+  slides: Presentation,
+  video: Film,
+  handbook: Layers,
+  policy: ShieldCheck,
+} as const
 
 export function Authoring() {
-  const { dispatch, group } = useGame()
-  const [docs, setDocs] = useState<SourceDoc[]>(sourceDocs)
-  const [openDoc, setOpenDoc] = useState<string | null>(null)
-  const [addError, setAddError] = useState<string | null>(null)
+  const { state, dispatch, group } = useGame()
+  const { health, pending } = useMediaStatus()
   const fileInput = useRef<HTMLInputElement>(null)
 
-  const [title, setTitle] = useState('')
-  const [focus, setFocus] = useState(concepts[0].id as string)
-  const [length, setLength] = useState(LENGTHS[1])
-  const cast = groupCast(group)
-  const [castIds, setCastIds] = useState<string[]>(() => cast.map((c) => c.id))
-
+  /* 1 — knowledge */
+  const [uploads, setUploads] = useState<SourceDoc[]>([])
+  const [uploadNote, setUploadNote] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [stage, setStage] = useState<{ doc?: string; id?: PipelineStage }>({})
   const [extracted, setExtracted] = useState<KnowledgeItem[]>([])
-  const [selected, setSelected] = useState<KnowledgeItem | null>(null)
-  const [draft, setDraft] = useState<ScenarioDraft | null>(null)
-  const [drafting, setDrafting] = useState(false)
-  const [clipNote, setClipNote] = useState<string | null>(null)
+  const [yieldByDoc, setYieldByDoc] = useState<Record<string, number>>({})
+  const [ran, setRan] = useState(false)
 
-  async function run() {
+  /* 2..8 — episode */
+  const [topic, setTopic] = useState<TopicDef | null>(null)
+  const [custom, setCustom] = useState('')
+  const [gen, setGen] = useState<{ busy: boolean; stages: Partial<Record<GenStage, string>>; error?: string }>({ busy: false, stages: {} })
+  const [result, setResult] = useState<GenerateResult | null>(null)
+  const [draft, setDraft] = useState<Episode | null>(null)
+  const [published, setPublished] = useState<string | null>(null)
+
+  const docs = [...sourceDocs, ...uploads]
+  const report = useMemo(() => (draft ? validateEpisode(draft) : null), [draft])
+
+  const resetEpisode = () => {
+    setResult(null)
+    setDraft(null)
+    setPublished(null)
+    setGen({ busy: false, stages: {} })
+  }
+
+  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const doc = await parseFile(file)
+      setUploads((u) => [...u.filter((d) => d.id !== doc.id), doc])
+      const key = await storeSourceDoc(doc)
+      setUploadNote(
+        `${doc.name} parsed · ${doc.excerpt.split(/\s+/).length} words · ${key ? `stored at ${key}` : 'not stored (no media server) — kept for this session'}`,
+      )
+    } catch (err) {
+      setUploadNote(err instanceof ParseError ? err.message : 'Could not read that file.')
+    }
+  }
+
+  async function runAgent() {
     setRunning(true)
     setExtracted([])
-    setDraft(null)
-    setSelected(null)
-    for await (const ev of runKnowledgeAgent(docs, { speed: 1.6 })) {
+    setYieldByDoc({})
+    setTopic(null)
+    resetEpisode()
+    for await (const ev of runKnowledgeAgent(docs, { speed: 2.4 })) {
       if (ev.type === 'stage') setStage({ doc: ev.doc?.name, id: ev.stage })
-      if (ev.type === 'item' && ev.item)
-        setExtracted((prev) => (prev.some((k) => k.id === ev.item!.id) ? prev : [...prev, ev.item!]))
+      if (ev.type === 'item' && ev.item && ev.doc) {
+        const { item, doc } = ev
+        setExtracted((prev) => (prev.some((k) => k.id === item.id) ? prev : [...prev, item]))
+        setYieldByDoc((y) => ({ ...y, [doc.id]: (y[doc.id] ?? 0) + 1 }))
+      }
     }
     setStage({})
     setRunning(false)
+    setRan(true)
   }
 
-  async function makeScenario(k: KnowledgeItem) {
-    setSelected(k)
-    setDrafting(true)
-    setDraft(null)
-    const d = await generateScenario(k)
-    setDraft(d)
-    setDrafting(false)
-  }
-
-  /** Only the text formats parse.ts understands; anything else says so. */
-  async function addFiles(files: FileList) {
-    setAddError(null)
-    for (const file of Array.from(files)) {
-      try {
-        const doc = await parseFile(file)
-        setDocs((prev) => [...prev, doc])
-      } catch (e) {
-        setAddError(e instanceof ParseError ? e.message : `Could not read “${file.name}”.`)
-      }
+  async function generate() {
+    if (!topic) return
+    resetEpisode()
+    setGen({ busy: true, stages: {} })
+    try {
+      const r = await generateEpisode({
+        topic,
+        groupId: group.id,
+        mastery: state.player.mastery,
+        corpus: extracted,
+        paceMs: 320,
+        onStage: (s, detail) => setGen((g) => ({ ...g, stages: { ...g.stages, [s]: detail } })),
+      })
+      setResult(r)
+      setDraft(r.episode)
+      setGen((g) => ({ ...g, busy: false }))
+    } catch (e) {
+      setGen((g) => ({
+        ...g,
+        busy: false,
+        error: e instanceof TopicNotCovered ? e.message : `Generation failed: ${(e as Error).message}`,
+      }))
     }
   }
 
-  const activeStepIndex = PROGRESS_STEPS.findIndex((s) => stage.id && s.stages.includes(stage.id))
+  const publish = (status: 'draft' | 'published') => {
+    if (!draft) return
+    dispatch({ type: 'PUBLISH_EPISODE', episode: draft, status })
+    if (status === 'published') setPublished(draft.id)
+  }
+  const play = () => draft && dispatch({ type: 'SELECT_EPISODE', episodeId: draft.id })
+
+  const step = (locked: boolean, done: boolean): StepState => (locked ? 'locked' : done ? 'done' : 'active')
+  const hasImages = !!draft && Object.values(draft.scenes).some((s) => s.assets?.background)
+  const hasClips = !!draft && Object.values(draft.scenes).some((s) => s.assets?.video)
+  const hasVoice = !!draft && Object.values(draft.scenes).some((s) => s.assets?.audio)
 
   return (
     <div className="relative h-full overflow-y-auto">
@@ -104,323 +162,341 @@ export function Authoring() {
           ← Episodes
         </button>
 
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        <Eyebrow className="text-signal">studio · ai authoring</Eyebrow>
+        <h1 className="t-display mt-3 text-[clamp(2.2rem,7vw,4.4rem)] text-bone">
+          BORING MATERIAL
+          <br />
+          IN. EPISODE OUT.
+        </h1>
+        <p className="mt-5 max-w-2xl font-sans text-[15px] font-light leading-relaxed text-bone-dim">
+          AI generates and personalises the content here, once. The employee plays a finished, validated graph through a
+          deterministic engine — no employee waits on a model, and no model can invent a branch.
+        </p>
+
+        <div className="mt-10">
+          <Rule label="architecture" />
+          <div className="mt-6 overflow-x-auto pb-2">
+            <Pipeline />
+          </div>
+        </div>
+
+        <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatusCard
+            title="language model"
+            value={llmLabel()}
+            detail={
+              llmMode() === 'offline'
+                ? 'No key. Extraction replays known docs, scripts come from the deterministic composer, chat uses the grounded composer. All labelled.'
+                : 'Live extraction, episode scripts, character chat and coaching.'
+            }
+            tone={llmMode() === 'offline' ? 'neutral' : 'good'}
+          />
+          <StatusCard
+            title="elevenlabs"
+            value={`${voiceLabel(ttsTier())} / ${voiceLabel(sttTier())}`}
+            detail="Character voices and dialogue audio only — not video. Without a key the browser voice stands in and says so."
+            tone={ttsTier() === 'elevenlabs' ? 'good' : 'neutral'}
+          />
+          <StatusCard
+            title="video generation"
+            value={health?.video.configured ? `${health.video.provider} · ${health.video.model}` : pending ? 'checking…' : 'procedural previs'}
+            detail={
+              health?.video.configured
+                ? 'Image-to-video: each major scene’s keyframe animated into a ~5 s clip through requestClip() at authoring time, then stored. The player only loads files.'
+                : 'No video provider configured. requestClip() resolves to procedural previs, labelled as not AI-generated.'
+            }
+            tone={health?.video.configured ? 'good' : 'neutral'}
+          />
+          <StatusCard
+            title="asset storage"
+            value={health ? `${health.storage.kind}` : 'none'}
+            detail={
+              health
+                ? `Object-store layout: ${health.storage.layout}.`
+                : 'No media server running — generated assets live in this session only.'
+            }
+            tone={health ? 'good' : 'neutral'}
+          />
+        </div>
+
+        {/* 1 ─ knowledge */}
+        <Step
+          n={1}
+          title="COMPANY KNOWLEDGE"
+          detail="Handbooks, policy documents and training transcripts. The knowledge agent turns them into atomic, citable rules — and rejects anything it cannot cite."
+          state={step(false, extracted.length > 0 && !running)}
         >
-          <h1 className="font-sans text-[34px] font-semibold tracking-[-0.02em] text-bone">Create an episode</h1>
-          <p className="mt-3 max-w-xl font-sans text-[15px] font-light leading-relaxed text-bone-dim">
-            Turn company policies, documents, and training material into an interactive DayOne episode.
-          </p>
-        </motion.div>
-
-        {/* ---------------------------------------------------- source material */}
-        <section className="mt-20">
-          <h2 className="t-section">Source material</h2>
-          <p className="mt-2 max-w-xl font-sans text-[14px] font-light leading-relaxed text-bone-dim">
-            Add the policies, guides, presentations, or videos this episode should teach.
-          </p>
-
-          <div className="mt-8">
+          <div className="grid gap-3 lg:grid-cols-2">
             {docs.map((d) => {
-              const open = openDoc === d.id
+              const Icon = DOC_ICON[d.type]
+              const active = stage.doc === d.name
+              const got = yieldByDoc[d.id] ?? 0
               return (
-                <div key={d.id} className="border-b border-bone/8">
-                  <div className="flex items-center gap-4 py-3.5">
-                    <button
-                      onClick={() => setOpenDoc(open ? null : d.id)}
-                      className="min-w-0 flex-1 text-left font-sans text-[14px] text-bone transition-colors hover:text-signal"
-                    >
-                      <span className="block truncate">{d.name}</span>
-                    </button>
-                    <span className="shrink-0 font-sans text-[13px] tabular-nums text-bone-faint">{docMeta(d)}</span>
-                    <button
-                      onClick={() => setDocs((prev) => prev.filter((x) => x.id !== d.id))}
-                      aria-label={`Remove ${d.name}`}
-                      className="shrink-0 px-1 font-sans text-[15px] leading-none text-bone-faint transition-colors hover:text-bone"
-                    >
-                      ×
-                    </button>
+                <div key={d.id} className={`glass p-4 transition-all duration-500 ${active ? 'border-signal/50' : got ? 'border-good/30' : ''}`}>
+                  <div className="flex items-center gap-3">
+                    <Icon size={15} className={active ? 'text-signal' : got ? 'text-good' : 'text-bone-faint'} />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-bone">{d.name}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-bone-faint">
+                      {d.type === 'video' ? 'transcript' : `${d.pages}pp`}
+                    </span>
                   </div>
-                  <AnimatePresence>
-                    {open && (
-                      <motion.p
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="overflow-hidden pb-4 font-sans text-[13px] font-light leading-relaxed text-bone-faint"
-                      >
-                        {d.excerpt}
-                      </motion.p>
-                    )}
-                  </AnimatePresence>
+                  <p className="mt-2.5 line-clamp-3 font-sans text-[11.5px] font-light italic leading-relaxed text-bone-faint">{d.excerpt}</p>
+                  {active && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {STAGES.map((s) => (
+                        <span
+                          key={s.id}
+                          className={`font-mono text-[8px] uppercase tracking-[0.14em] ${stage.id === s.id ? 'text-signal' : 'text-bone-faint/50'}`}
+                        >
+                          {s.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {ran && !active && (
+                    <div className="mt-3">
+                      {got ? (
+                        <Chip tone="good">{got} rules extracted</Chip>
+                      ) : (
+                        <Chip tone="signal">{isLive() ? 'no citable rules found' : '0 rules — new material needs a language model'}</Chip>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
 
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            accept={SUPPORTED_EXTENSIONS.map((e) => `.${e}`).join(',')}
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files) void addFiles(e.target.files)
-              e.target.value = ''
-            }}
-          />
-          <button
-            onClick={() => fileInput.current?.click()}
-            className="mt-6 border border-bone/15 px-5 py-2.5 font-sans text-[13.5px] text-bone-dim transition-colors hover:border-bone/35 hover:text-bone"
-          >
-            Add material
-          </button>
-          {addError && <p className="mt-3 font-sans text-[13px] text-danger">{addError}</p>}
-        </section>
-
-        {/* ------------------------------------------------------ episode setup */}
-        <section className="mt-20">
-          <h2 className="t-section">Episode setup</h2>
-          <div className="mt-8 grid gap-x-16 gap-y-10 sm:grid-cols-2">
-            <Field label="Episode title">
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="First Day"
-                className="w-full max-w-[320px] border-b border-bone/15 bg-transparent pb-2 font-sans text-[15px] text-bone outline-none transition-colors placeholder:text-bone-faint focus:border-signal"
-              />
-            </Field>
-            <Field label="Focus">
-              <select
-                value={focus}
-                onChange={(e) => setFocus(e.target.value)}
-                className="w-full max-w-[320px] border-b border-bone/15 bg-transparent pb-2 font-sans text-[15px] text-bone outline-none transition-colors focus:border-signal"
-              >
-                {concepts.map((c) => (
-                  <option key={c.id} value={c.id} className="bg-ink-800">
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Length">
-              <select
-                value={length}
-                onChange={(e) => setLength(e.target.value)}
-                className="w-full max-w-[320px] border-b border-bone/15 bg-transparent pb-2 font-sans text-[15px] text-bone outline-none transition-colors focus:border-signal"
-              >
-                {LENGTHS.map((l) => (
-                  <option key={l} value={l} className="bg-ink-800">
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Characters">
-              <div className="flex flex-wrap gap-2">
-                {cast.map((c) => {
-                  const on = castIds.includes(c.id)
-                  return (
-                    <button
-                      key={c.id}
-                      aria-pressed={on}
-                      onClick={() =>
-                        setCastIds((prev) => (on ? prev.filter((x) => x !== c.id) : [...prev, c.id]))
-                      }
-                      className={`border px-3 py-1.5 font-sans text-[13px] transition-colors ${
-                        on ? 'border-bone/25 bg-bone/5 text-bone' : 'border-bone/10 text-bone-faint hover:text-bone-dim'
-                      }`}
-                    >
-                      {c.name.split(' ')[0].charAt(0) + c.name.split(' ')[0].slice(1).toLowerCase()}
-                    </button>
-                  )
-                })}
-              </div>
-            </Field>
-          </div>
-        </section>
-
-        {/* ----------------------------------------------------------- generate */}
-        <section className="mt-20">
-          <button
-            onClick={() => void run()}
-            disabled={running || docs.length === 0}
-            className="bg-signal px-7 py-3.5 font-sans text-[14px] font-medium text-ink-900 transition-colors duration-200 hover:bg-signal-hot disabled:pointer-events-none disabled:opacity-35"
-          >
-            {running ? 'Generating…' : 'Generate episode'}
-          </button>
-          <p className="mt-3 font-sans text-[13px] text-bone-faint">
-            DayOne will build scenarios and decisions using the selected material.
-          </p>
-
-          <AnimatePresence>
-            {running && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-8">
-                <p className="font-sans text-[14px] text-bone">Preparing episode…</p>
-                <div className="mt-3 space-y-1.5">
-                  {PROGRESS_STEPS.map((s, i) => (
-                    <p
-                      key={s.label}
-                      className={`font-sans text-[13.5px] transition-colors ${
-                        i <= activeStepIndex ? 'text-bone-dim' : 'text-bone-faint'
-                      }`}
-                    >
-                      {s.label}
-                    </p>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </section>
-
-        {/* ------------------------------------------------- extracted teaching */}
-        <AnimatePresence>
-          {extracted.length > 0 && (
-            <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-20">
-              <h2 className="t-section">What this episode will teach</h2>
-              <p className="mt-2 max-w-xl font-sans text-[14px] font-light leading-relaxed text-bone-dim">
-                Select a rule to preview the scene built from it.
-              </p>
-              <div className="mt-8">
-                {extracted.map((k) => (
-                  <button
-                    key={k.id}
-                    onClick={() => void makeScenario(k)}
-                    className={`block w-full border-b border-bone/8 py-4 text-left transition-colors ${
-                      selected?.id === k.id ? 'text-bone' : 'text-bone-dim hover:text-bone'
-                    }`}
-                  >
-                    <span className="block max-w-3xl font-sans text-[14.5px] font-light leading-snug">{k.rule}</span>
-                    <span className="mt-1.5 block font-sans text-[12.5px] text-bone-faint">
-                      {k.topic} · {k.source.doc}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
-
-        {/* ---------------------------------------------------- scenario preview */}
-        <AnimatePresence>
-          {(drafting || draft) && (
-            <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mt-20">
-              <h2 className="t-section">Scene preview</h2>
-              {drafting && <p className="mt-6 font-sans text-[14px] text-bone-dim">Writing the scene…</p>}
-              {draft && (
-                <div className="mt-8 max-w-3xl">
-                  <p className="font-sans text-[15px] font-light leading-relaxed text-bone">{draft.situation}</p>
-
-                  <div className="mt-8 space-y-4">
-                    {draft.setup.map((s, i) => (
-                      <div key={i}>
-                        <span className="font-sans text-[12.5px] text-bone-faint">
-                          {s.speaker.charAt(0) + s.speaker.slice(1).toLowerCase()}
-                        </span>
-                        <p className="font-sans text-[14.5px] font-light leading-snug text-bone-dim">{s.line}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <p className="mt-10 font-sans text-[15px] font-medium text-bone">{draft.prompt}</p>
-                  <div className="mt-4">
-                    {draft.choices.map((c, i) => (
-                      <div key={i} className="border-b border-bone/8 py-4">
-                        <div className="flex items-baseline justify-between gap-6">
-                          <span className="font-sans text-[14.5px] font-light leading-snug text-bone">{c.text}</span>
-                          <span className="shrink-0 font-sans text-[12.5px] text-bone-faint">
-                            {c.quality === 'best' ? 'Best' : c.quality === 'acceptable' ? 'Acceptable' : 'Poor'}
-                          </span>
-                        </div>
-                        <p className="mt-2 font-sans text-[13px] font-light leading-relaxed text-bone-faint">
-                          {c.consequence}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <Btn onClick={() => void runAgent()} disabled={running}>
+              {running ? (
+                <>
+                  <motion.span animate={{ rotate: 360 }} transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}>
+                    <Wand2 size={13} />
+                  </motion.span>
+                  extracting…
+                </>
+              ) : (
+                <>
+                  <Play size={13} fill="currentColor" /> run knowledge agent
+                </>
               )}
-            </motion.section>
-          )}
-        </AnimatePresence>
-
-        {/* ----------------------------------------------------------- advanced */}
-        <details className="group mt-24 border-t border-bone/8 pt-8">
-          <summary className="cursor-pointer list-none font-sans text-[14px] font-medium text-bone-dim transition-colors marker:content-none hover:text-bone">
-            Advanced
-          </summary>
-
-          <div className="mt-8 max-w-3xl space-y-8">
-            <div>
-              <h3 className="font-sans text-[13.5px] font-medium text-bone">Providers</h3>
-              <dl className="mt-3 space-y-2">
-                {[
-                  ['Language model', llmLabel(), llmMode() === 'offline' ? 'No key configured — replies run on the deterministic grounded composer.' : 'Live completions for chat, coaching, extraction and generation.'],
-                  ['Voice', `${voiceLabel(ttsTier())} / ${voiceLabel(sttTier())}`, 'TTS and STT sit behind one boundary in src/voice/voice.ts.'],
-                  ['Video', 'Authoring stub', 'requestClip() is where a text-to-video call would write back to Scene.shot.videoUrl.'],
-                ].map(([label, value, detail]) => (
-                  <div key={label} className="flex flex-wrap items-baseline gap-x-3">
-                    <dt className="font-sans text-[13px] text-bone-dim">{label}</dt>
-                    <dd className="font-mono text-[12px] text-bone">{value}</dd>
-                    <dd className="w-full font-sans text-[12.5px] font-light text-bone-faint">{detail}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-
-            <div>
-              <h3 className="font-sans text-[13.5px] font-medium text-bone">Pipeline stages</h3>
-              <p className="mt-2 font-mono text-[12px] leading-relaxed text-bone-faint">
-                {STAGES.map((s) => s.label.toLowerCase()).join(' · ')}
-              </p>
-            </div>
-
-            {draft && (
-              <div>
-                <h3 className="font-sans text-[13.5px] font-medium text-bone">Video generation</h3>
-                <p className="mt-2 font-mono text-[12px] text-bone-faint">
-                  {VIDEO_PIPELINE_STAGES.join(' · ')}
-                </p>
-                <div className="mt-3 space-y-2">
-                  {draft.shots.map((s, i) => (
-                    <p key={i} className="font-sans text-[12.5px] font-light leading-relaxed text-bone-faint">
-                      {s}
-                    </p>
-                  ))}
-                </div>
-                <button
-                  onClick={() => void requestClip(firstDay.scenes.d1_email.shot).then((r) => setClipNote(r.note))}
-                  className="mt-4 border border-bone/15 px-4 py-2 font-sans text-[13px] text-bone-dim transition-colors hover:border-bone/35 hover:text-bone"
-                >
-                  Queue render
-                </button>
-                {clipNote && <p className="mt-3 font-mono text-[12px] leading-relaxed text-bone-faint">{clipNote}</p>}
-              </div>
-            )}
-
-            <div>
-              <h3 className="font-sans text-[13.5px] font-medium text-bone">Why this is not a quiz</h3>
-              <p className="mt-2 font-sans text-[13px] font-light leading-relaxed text-bone-faint">
-                The generator is told that the wrong answer must be the most helpful one in the short term, and that no
-                option may be identifiable as correct from its wording. Recall questions are cheap to generate and teach
-                nothing — application under social pressure is the whole product.
-              </p>
-            </div>
+            </Btn>
+            <input
+              ref={fileInput}
+              type="file"
+              accept={SUPPORTED_EXTENSIONS.map((x) => `.${x}`).join(',')}
+              onChange={(e) => void onUpload(e)}
+              className="hidden"
+            />
+            <Btn variant="outline" onClick={() => fileInput.current?.click()} disabled={running}>
+              <Upload size={12} /> upload {SUPPORTED_EXTENSIONS.map((x) => `.${x}`).join(' ')}
+            </Btn>
+            <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-bone-faint">
+              {extracted.length} knowledge items
+            </span>
           </div>
-        </details>
+          {uploadNote && <p className="mt-3 font-mono text-[10px] text-bone-dim">{uploadNote}</p>}
+
+          {extracted.length > 0 && (
+            <div className="mt-6 grid gap-1.5 lg:grid-cols-2">
+              {extracted.map((k) => (
+                <div key={k.id} className="flex items-center gap-2 border border-bone/8 bg-ink-900/30 px-3 py-2">
+                  <span className="font-mono text-[9px] tracking-[0.12em] text-signal">{k.id}</span>
+                  <span className="min-w-0 flex-1 truncate font-sans text-[12px] font-light text-bone">{k.topic}</span>
+                  <Chip tone={k.severity === 'critical' ? 'danger' : k.severity === 'high' ? 'signal' : 'neutral'}>{k.severity}</Chip>
+                </div>
+              ))}
+            </div>
+          )}
+        </Step>
+
+        {/* 2 ─ topic */}
+        <Step
+          n={2}
+          title="PICK A TOPIC"
+          detail="Coverage is counted against the knowledge extracted above. A topic the material does not cover is refused, not improvised."
+          state={step(!extracted.length || running, !!topic)}
+        >
+          <div className="flex flex-wrap gap-2">
+            {TOPICS.map((t) => {
+              const n = selectKnowledge(t, extracted).length
+              const on = topic?.id === t.id
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setTopic(t)
+                    resetEpisode()
+                  }}
+                  className={`flex flex-col items-start border px-4 py-3 text-left transition-colors ${
+                    on ? 'border-signal/70 bg-signal/[0.07]' : 'border-bone/12 hover:border-bone/35'
+                  }`}
+                >
+                  <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-bone">{t.label}</span>
+                  <span className={`mt-1 font-mono text-[9px] uppercase tracking-[0.12em] ${n >= MIN_RULES ? 'text-good' : 'text-danger'}`}>
+                    {n} rules · {t.blurb}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!custom.trim()) return
+              setTopic(customTopic(custom))
+              resetEpisode()
+            }}
+            className="mt-3 flex max-w-md items-center gap-2 border border-bone/15 px-3 focus-within:border-signal/50"
+          >
+            <input
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              placeholder="or type any topic…"
+              className="min-w-0 flex-1 bg-transparent py-2.5 font-sans text-[13px] font-light text-bone placeholder:text-bone-faint focus:outline-none"
+            />
+            <button type="submit" className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint hover:text-signal">
+              use
+            </button>
+          </form>
+          <p className="mt-3 font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
+            cast from {group.name} · personalised for the current employee profile
+          </p>
+        </Step>
+
+        {/* 3 ─ generate */}
+        <Step
+          n={3}
+          title="GENERATE THE EPISODE"
+          detail="Code builds the structure — scenes, transitions, which option is strong, citations, the adaptive act. A model, when configured, writes the words. Then the graph is validated with the same rules the engine enforces."
+          state={step(!topic || running, !!draft)}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <Btn onClick={() => void generate()} disabled={gen.busy}>
+              <Wand2 size={13} />
+              {gen.busy ? 'generating…' : `generate episode · ${topic?.label ?? ''}`}
+            </Btn>
+          </div>
+          {(gen.busy || Object.keys(gen.stages).length > 0) && (
+            <div className="mt-5 space-y-1.5">
+              {GEN_STAGES.map((s) => (
+                <div key={s.id} className="flex items-baseline gap-3 font-mono text-[10px]">
+                  <span className={`w-[190px] shrink-0 uppercase tracking-[0.14em] ${gen.stages[s.id] ? 'text-cyan' : 'text-bone-faint/50'}`}>
+                    {s.label}
+                  </span>
+                  <span className="text-bone-dim">{gen.stages[s.id] ?? ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {gen.error && <p className="mt-4 max-w-2xl border-l-2 border-danger/60 pl-3 font-sans text-[13px] text-danger">{gen.error}</p>}
+          {result && draft && (
+            <div className="glass mt-6 p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip tone="signal">{draft.code}</Chip>
+                <Chip tone={result.source === 'llm' ? 'good' : 'neutral'}>
+                  {result.source === 'llm' ? `script · ${llmLabel()}` : 'script · deterministic composer'}
+                </Chip>
+                <Chip>{draft.provenance?.difficulty} difficulty</Chip>
+              </div>
+              <h3 className="t-display mt-3 text-3xl text-bone">{draft.title}</h3>
+              <p className="mt-1 font-sans text-[13.5px] font-light text-bone-dim">{draft.synopsis}</p>
+              <p className="mt-2 font-mono text-[9.5px] uppercase tracking-[0.14em] text-cyan">
+                mastery targets · {result.plan.targets.map((c) => conceptLabel(c)).join(' → ')}
+              </p>
+              {result.notes.map((n) => (
+                <p key={n} className="mt-2 font-mono text-[10px] text-signal">
+                  {n}
+                </p>
+              ))}
+            </div>
+          )}
+        </Step>
+
+        {/* 4 ─ review */}
+        <Step
+          n={4}
+          title="REVIEW THE GRAPH"
+          detail="Acts, scenes, choices, consequences, citations, shot specs and assets. Open any scene."
+          state={step(!draft, !!report?.ok)}
+        >
+          {draft && report && <GraphReview episode={draft} report={report} />}
+        </Step>
+
+        {/* 5 ─ visuals */}
+        <Step
+          n={5}
+          title="GENERATE VISUAL ASSETS"
+          detail="Dialogue scenes get a generated background with character sprites over it; each major beat gets a keyframe for its clip. Rendered once, here."
+          state={step(!draft, hasImages)}
+        >
+          {draft && <VisualAssets episode={draft} onChange={setDraft} />}
+        </Step>
+
+        {/* 6 ─ voice */}
+        <Step
+          n={6}
+          title="GENERATE VOICES"
+          detail="Every character line, in that character's ElevenLabs voice."
+          state={step(!draft, hasVoice)}
+        >
+          {draft && <VoiceAssets episode={draft} onChange={setDraft} />}
+        </Step>
+
+        {/* 7 ─ video */}
+        <Step
+          n={7}
+          title="GENERATE CINEMATIC VIDEO"
+          detail="Four short clips — cold open, confrontation, incident, ending — each animated from its keyframe. Everything else stays background, sprite and voice."
+          state={step(!draft, hasClips)}
+        >
+          {draft && <VideoAssets episode={draft} onChange={setDraft} />}
+        </Step>
+
+        {/* 8 ─ lens */}
+        <Step
+          n={8}
+          title="TWO EMPLOYEES, ONE EPISODE"
+          detail="Act three is selected by the mastery model at play time. Here is what two different employees get from this exact graph."
+          state={step(!draft, !!draft)}
+        >
+          {draft && <PlayerLensPanel episode={draft} />}
+        </Step>
+
+        {/* 9 ─ ship */}
+        <Step
+          n={9}
+          title="PREVIEW AND PUBLISH"
+          detail="Publishing hands the graph to the reducer, which re-validates it and refuses anything that fails."
+          state={step(!report?.ok, !!published)}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <Btn
+              variant="outline"
+              onClick={() => {
+                publish('draft')
+                play()
+              }}
+            >
+              <Play size={12} /> preview as employee
+            </Btn>
+            <Btn onClick={() => publish('published')} disabled={!!published}>
+              <Rocket size={13} /> {published ? 'published' : 'publish episode'}
+            </Btn>
+            {published && (
+              <Btn variant="outline" onClick={play}>
+                <Play size={12} fill="currentColor" /> play it
+              </Btn>
+            )}
+          </div>
+          {published && (
+            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-good">
+              on the {group.name} shelf · every employee who opens it gets their own act three
+            </p>
+          )}
+        </Step>
       </div>
     </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-3 block font-sans text-[13px] text-bone-dim">{label}</span>
-      {children}
-    </label>
   )
 }

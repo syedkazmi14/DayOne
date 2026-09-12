@@ -1,5 +1,5 @@
 import { concepts } from '@/content/knowledge'
-import type { Choice, ConceptId, DecisionRecord, Mastery, PlayerState } from '@/types'
+import type { Choice, ConceptId, DecisionRecord, Mastery, PlayerState, Scene } from '@/types'
 
 /* ============================================================================
  * ADAPTIVE LEARNING
@@ -57,6 +57,64 @@ export function weakestConcept(
   const pool = among && among.length ? among : (Object.keys(mastery) as ConceptId[])
   return pool.reduce((worst, c) => (mastery[c].score < mastery[worst].score ? c : worst), pool[0])
 }
+
+/**
+ * Resolve an adaptive slot. The one definition the reducer, the Studio's player
+ * lens and the tests all use, so "which act three does this player get" has a
+ * single answer.
+ */
+export function selectVariant(
+  scene: Scene,
+  mastery: Record<ConceptId, Mastery>,
+): { focus: ConceptId; sceneId: string; rationale: string } {
+  const variants = scene.variants ?? []
+  const focus = weakestConcept(mastery, variants.map((v) => v.conceptFocus))
+  const chosen = variants.find((v) => v.conceptFocus === focus) ?? variants[0]
+  return { focus: chosen.conceptFocus, sceneId: chosen.sceneId, rationale: adaptationRationale(mastery, chosen.conceptFocus) }
+}
+
+/**
+ * Two reference employees for the Studio's side-by-side preview. Same episode,
+ * different mastery, therefore a different act three — by construction, not
+ * by chance.
+ */
+export interface PlayerLens {
+  id: string
+  name: string
+  summary: string
+  mastery: Record<ConceptId, Mastery>
+}
+
+export const PLAYER_LENSES: PlayerLens[] = [
+  {
+    id: 'player-a',
+    name: 'PLAYER A',
+    summary: 'Catches external phishing. Trusts a familiar voice.',
+    mastery: {
+      phishing: { score: 0.88, attempts: 4, correct: 4 },
+      password_security: { score: 0.62, attempts: 2, correct: 1 },
+      data_handling: { score: 0.7, attempts: 2, correct: 2 },
+      approved_tools: { score: 0.6, attempts: 1, correct: 1 },
+      incident_reporting: { score: 0.55, attempts: 1, correct: 1 },
+      social_engineering: { score: 0.28, attempts: 3, correct: 0 },
+      physical_security: { score: 0.5, attempts: 0, correct: 0 },
+    },
+  },
+  {
+    id: 'player-b',
+    name: 'PLAYER B',
+    summary: 'Sceptical of strangers. Loose with customer data.',
+    mastery: {
+      phishing: { score: 0.34, attempts: 3, correct: 1 },
+      password_security: { score: 0.66, attempts: 2, correct: 2 },
+      data_handling: { score: 0.22, attempts: 3, correct: 0 },
+      approved_tools: { score: 0.4, attempts: 2, correct: 1 },
+      incident_reporting: { score: 0.6, attempts: 1, correct: 1 },
+      social_engineering: { score: 0.81, attempts: 3, correct: 3 },
+      physical_security: { score: 0.5, attempts: 0, correct: 0 },
+    },
+  },
+]
 
 export function strongestConcept(mastery: Record<ConceptId, Mastery>): ConceptId {
   const pool = Object.keys(mastery) as ConceptId[]

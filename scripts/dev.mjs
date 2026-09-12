@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /* ============================================================================
- * `npm run dev` — Vite plus the voice proxy, in one terminal.
+ * `npm run dev` — Vite, the voice proxy and the media server, in one terminal.
  *
- * The proxy is the only process given ELEVENLABS_API_KEY, and Vite forwards
- * /api/voice to it (see vite.config.ts). Either child exiting takes the other
+ * The voice proxy is the only process that uses ELEVENLABS_API_KEY; the media
+ * server is the only one that uses REPLICATE_API_TOKEN. Vite forwards /api/voice and
+ * /api/media to them (see vite.config.ts). Any child exiting takes the others
  * down, so Ctrl-C leaves nothing running.
  *
  * Env is read from .env.local then .env (both gitignored), without adding a
@@ -65,6 +66,7 @@ function start(label, command, args) {
 }
 
 start('voice proxy', process.execPath, ['server/voiceProxy.mjs'])
+start('media server', process.execPath, ['server/mediaServer.mjs'])
 start('vite', process.execPath, ['node_modules/vite/bin/vite.js'])
 
 process.on('SIGINT', () => stopAll(0))

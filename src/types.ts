@@ -145,15 +145,70 @@ export interface Choice {
   ledgerLabel: string
 }
 
+/**
+ * SHOT SPECIFICATION — instructions for generating a scene's visual asset.
+ *
+ * The spec is authored (by a person or the scenario generator); the asset it
+ * describes is produced ahead of time by a provider (src/media) and attached as
+ * `Scene.assets`. The reducer never reads either.
+ */
 export interface ShotSpec {
   /** Environment key for the procedural cinematic renderer. */
   env: 'lobby' | 'desk' | 'open_office' | 'corridor' | 'server_room' | 'night_office' | 'rooftop'
   time: 'morning' | 'midday' | 'dusk' | 'night'
   mood: 'neutral' | 'warm' | 'tense' | 'alarm' | 'calm'
-  /** The prompt that WOULD be sent to a video generation API at authoring time. */
+  /** The text-to-video / text-to-image prompt sent at authoring time. */
   prompt: string
-  /** Populated once a clip has been pre-generated. Player never waits on it. */
-  videoUrl?: string
+  /**
+   * 'clip' — a major beat worth a short generated video.
+   * 'still' — a generated background plus character sprites and voice.
+   * Absent: titled cinematic scenes are clips, everything else is a still.
+   */
+  presentation?: 'clip' | 'still'
+  /** Target clip length. Clips are short cinematic shots, 5–8 s. */
+  durationSec?: number
+  camera?: string
+  /** What visibly happens in the shot — the character and environment motion a video model animates. */
+  action?: string
+}
+
+/* ------------------------------------------------------------------- assets */
+
+export type AssetKind = 'video' | 'image' | 'audio'
+
+/**
+ * 'generated'  — an AI provider produced a file (video model, image model, TTS).
+ * 'procedural' — nothing was generated; the runtime renders it from the spec.
+ * The UI states which. A procedural asset is never presented as AI output.
+ */
+export type AssetTier = 'generated' | 'procedural'
+
+/** One authored asset. Produced at authoring time; the player only loads it. */
+export interface AssetRef {
+  kind: AssetKind
+  tier: AssetTier
+  /** 'fal-ai/ltx-video', 'elevenlabs', 'procedural-previs', … */
+  provider: string
+  /** Absent for procedural assets — there is no file. */
+  url?: string
+  prompt?: string
+  /** Object-store key: company/episodes/<episode>/videos/<scene>.mp4 */
+  storageKey?: string
+  createdAt: string
+}
+
+export interface SceneAssets {
+  video?: AssetRef
+  background?: AssetRef
+  /** Pre-rendered voice per dialogue line index. */
+  audio?: Record<number, AssetRef>
+}
+
+/** What shape of risk a decision presents. Drives run telemetry, not branching. */
+export interface ThreatProfile {
+  /** Does the risk arrive from outside, or from someone the player works with? */
+  source: 'external' | 'internal'
+  pressure: 'authority' | 'urgency' | 'peer' | 'none'
 }
 
 export interface Scene {
@@ -183,6 +238,12 @@ export interface Scene {
   next?: string
   /** Adaptive slot: engine picks one variant by the player's weakest concept. */
   variants?: { conceptFocus: ConceptId; sceneId: string }[]
+  /** Pre-generated visual/audio assets. Optional: absent, the runtime renders the shot. */
+  assets?: SceneAssets
+  /** Knowledge ids this scene is built on (decisions); consequences cite via outcome. */
+  knowledgeRefs?: string[]
+  /** Decision scenes: the risk shape, recorded with the decision for the coach. */
+  threat?: ThreatProfile
 }
 
 export interface Episode {
@@ -211,6 +272,27 @@ export interface Episode {
   scenes: Record<string, Scene>
   /** Ordered act beats, used for the progress rail. */
   beats: { act: number; label: string }[]
+  /**
+   * Knowledge a generated episode is grounded in, snapshotted at generation so
+   * its citations and character chat keep resolving whatever the base becomes.
+   */
+  knowledge?: KnowledgeItem[]
+  /** Present on generated episodes. */
+  provenance?: EpisodeProvenance
+}
+
+export interface EpisodeProvenance {
+  generator: 'llm' | 'local'
+  model?: string
+  topic: string
+  knowledgeIds: string[]
+  /** Concepts the adaptive act can target, weakest-first for the authoring profile. */
+  masteryTargets: ConceptId[]
+  difficulty: 'intro' | 'standard' | 'hard'
+  /** characterId -> narrative role in this episode. */
+  roles: Record<string, string>
+  createdAt: string
+  status: 'draft' | 'published'
 }
 
 /* ------------------------------------------------------------- player state */
@@ -233,12 +315,15 @@ export interface DecisionRecord {
   scoreImpact: number
   wager?: WagerResult
   msToDecide: number
+  threat?: ThreatProfile
 }
 
 export interface WagerResult {
   tier: 'safe' | 'risky' | 'allin'
   staked: number
   payout: number
+  multiplier: number
+  /** Mastery-model estimate, recorded silently at bet time and revealed after. */
   estimate: number
   won: boolean
 }

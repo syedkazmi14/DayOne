@@ -83,6 +83,7 @@ export function EpisodeStill({ episode, sceneKey, paused = false, priority = fal
     )
 
   const shot = episode.entrySceneId ? episode.scenes[episode.entrySceneId]?.shot ?? episode.poster : episode.poster
-  if (shot) return <SceneCanvas shot={shot} sceneKey={sceneKey} paused={paused} />
+  const assets = episode.entrySceneId ? episode.scenes[episode.entrySceneId]?.assets : undefined
+  if (shot) return <SceneCanvas shot={shot} sceneKey={sceneKey} paused={paused} assets={assets} />
   return <div className={`absolute inset-0 bg-gradient-to-br from-ink-700 to-ink-900 ${className}`} />
 }

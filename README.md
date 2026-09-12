@@ -22,7 +22,8 @@ put in the client bundle:
 
 ```bash
 echo 'ELEVENLABS_API_KEY=sk_...' >> .env.local   # gitignored
-npm run dev
+echo 'REPLICATE_API_TOKEN=r8_...' >> .env.local  # optional: scene images + Wan 2.2 video
+npm run dev                                      # Vite + voice proxy + media server
 ```
 
 ---
@@ -38,16 +39,23 @@ npm run dev
 3. **Episode intro** — cast, concepts, and a note saying which act has already
    been personalised for you
 4. **Cinematic scenes** — full-bleed, letterboxed, subtitled dialogue
-5. **Risk terminal** — wager virtual credits against the system's estimate of
-   whether you'll get this one right
+5. **Wager** — SAFE 1.2× · RISKY 2× · ALL IN 4×, virtual credits only. The
+   mastery model's estimate is recorded at bet time and revealed after the
+   outcome, so it never anchors the call
 6. **Decision** — three defensible options, none of them flagged
 7. **Consequence** — the world reacts *first*; the explanation comes after
-8. **Character chat** — text or voice, grounded in the knowledge base, with a
-   retrieval inspector that shows the evidence
+8. **Character chat** — text or voice, grounded in the knowledge base. **Inspect**
+   shows the grounding verdict (GROUNDED / REFUSED · out of scope / weak
+   evidence / no match), confidence against the floor, every retrieved chunk
+   with relevance and matched terms, the rules actually used, and the prompt
 9. **Adaptive act three** — built around your weakest demonstrated concept
-10. **Results + AI coach** — what your decisions revealed, and what changes next
+10. **Results + AI coach** — accuracy on external threats vs coworker requests,
+    decision speed under authority pressure, bet calibration, the single biggest
+    weakness — then **generate my next episode**, built from that weakness
 11. **Profile** — mastery scores that actually drive 9 and 10
-12. **Studio** — watch company documents become an episode
+12. **Studio** — company material → topic → a generated, validated episode
+    graph → clips, backgrounds and voices → two employees' act threes side by
+    side → publish → play it
 
 `npm run verify` clicks through all of it headlessly (see *Verification*).
 
@@ -59,48 +67,60 @@ The load-bearing decision: **AI generates and personalises the content; a
 deterministic engine delivers the experience.**
 
 ```
-              COMPANY CONTENT              pdf · video · slides · handbook
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │   Knowledge Agent    │         LLM · authoring time
-          └──────────┬───────────┘
-                     ▼
-               KnowledgeItem[]             atomic, citable, severity-tagged
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │  Scenario Generator  │         LLM · authoring time
-          └──────────┬───────────┘
-                     ▼
-              Episode Graph (JSON)         scenes · choices · shot prompts
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │  Deterministic Game  │         reducer · NO LLM
-          └───────┬──────────────┘
-                  │
-        ┌─────────┴──────────┐
-        ▼                    ▼
-   Player Choice        Character Chat     LLM + RAG · runtime
-   (authored branch)         │
-                             ▼
-                        ElevenLabs
+   COMPANY CONTENT  +  TOPIC  +  PLAYER MASTERY         ── AUTHORING TIME ──
+          │
+          ▼
+   Knowledge Agent            LLM          -> KnowledgeItem[] (validated, citable)
+          │
+          ▼
+   Scenario Generator         code + LLM   -> Episode graph: acts · decisions ·
+          │                                   consequences · citations · threat
+          │                                   profiles · adaptive act · SHOT SPECS
+          ▼
+   validateEpisode()          code         -> refuses anything unplayable
+          │
+          ▼
+   Asset pipeline             providers    -> requestClip(shot)   video model
+          │                                   backgrounds         image model
+          │                                   dialogue audio      ElevenLabs
+          ▼                                   stored: company/episodes/<id>/…
+   PUBLISH_EPISODE            reducer      -> re-validated, then playable
+   ─────────────────────────────────────────────────────────── RUNTIME ──
+   Deterministic Game         reducer · NO LLM · (state, action) => state
+      │             │                 │
+      ▼             ▼                 ▼
+   Player choice  Character chat    Run telemetry -> Coach -> mastery
+   (authored      RAG -> refusal    (measured)      (narrates)   │
+    branch)       gate -> LLM ->                                 ▼
+                  ElevenLabs                          next episode targets
+                                                      the weakest concept
 ```
 
 **No LLM output can move the player through the game.** Every state transition
 is `(state, action) => state` over authored data (`src/engine/gameStore.tsx`). A
 model cannot invent a branch, skip an act, or put the player in a scene that
-does not exist. That is what makes it demoable at all.
+does not exist. Actions carry ids, never payloads the engine would have to
+trust: `CHOOSE` is looked up on the current scene, a wager's stake and payout
+are derived from the balance, and `PUBLISH_EPISODE` refuses any graph that
+fails validation. That is what makes it demoable at all.
+
+**The generator splits authority the same way.** Code builds the structure of a
+generated episode — scene ids, transitions, which option is strong, what each
+branch cites, which concepts the adaptive act targets. A model, when configured,
+writes the *words* (lines, choices, lessons, shot prompts), merged field by field
+into that skeleton (`applyScript`). A script that breaks a graph rule is
+discarded, not patched.
 
 ### Where AI is used, and why
 
 | Component | Runs | Why an LLM earns its place |
 |---|---|---|
 | **Knowledge Agent** (`src/ai/knowledgeAgent.ts`) | Authoring | Arbitrary company documents → structured, citable rules. Nothing else reads legalese. |
-| **Scenario Generator** (`src/ai/scenarioGenerator.ts`) | Authoring | Turning a rule into a situation that tests *application* under social pressure. |
+| **Episode Generator** (`src/ai/episodeGenerator.ts`) | Authoring | Code builds a playable graph from the topic's rules and the player's mastery; the model writes the scene script in the company's voice. |
+| **Asset providers** (`src/media/`) | Authoring | Short establishing clips and scene backgrounds from each shot spec; ElevenLabs for dialogue. Nobody playing waits on them. |
 | **Character Conversation** (`src/ai/characterAgent.ts`) | Runtime | The player can ask anything. Hundreds of hardcoded branches cannot cover that. |
 | **Adaptive Learning** (`src/engine/adaptive.ts`) | Runtime | **Not an LLM.** A number that drives branching must be stable and explainable. |
+| **Run telemetry** (`src/engine/telemetry.ts`) | Runtime | **Not an LLM.** Accuracy by threat source, authority slowdown, calibration, biggest weakness — measured. |
 | **AI Coach** (`src/ai/coach.ts`) | Runtime | The *analysis* is deterministic; the model only narrates it. |
 | **Game state** (`src/engine/gameStore.tsx`) | Runtime | **Never an LLM.** |
 
@@ -117,11 +137,24 @@ current scene):
   and the refusal is labelled in the transcript
 - the **inspect** panel in the chat shows the retrieved chunks with scores and
   the exact system prompt, so "grounded" is verifiable rather than claimed
+- the refusal gate sits **in front of** the model, not inside its prompt: below
+  the floor the live path never calls the model at all — a prompt instruction
+  is a request, the gate is a guarantee
+- every reply carries a grounding trace — `grounded`, `social`, or `refused`
+  classified as `no_match` (nothing shares a term), `out_of_scope` (most of the
+  question's vocabulary is absent from the material) or `weak_evidence`
+- a generated episode's characters retrieve over **that episode's** knowledge
+  snapshot, so they are grounded in the material it was built from
 
 Confidence deliberately punishes coincidence: out-of-vocabulary query terms and
 single-term matches are damped, so *"what do you think about the new espresso
 machine on floor two?"* gets an honest "I don't know", not a confident answer
-about the nearest security rule.
+about the nearest security rule. It also checks **specificity**: the best rule
+has to explain at least 60% of the question's idf-weighted vocabulary, and a
+word the material has never seen counts as maximally specific. So *"what is the
+password for the espresso machine on floor two?"* is refused too. "Password"
+and "machine" match a real incident rule, but the question is about an espresso
+machine, and nothing in the material covers one.
 
 ---
 
@@ -136,15 +169,56 @@ Nothing here pretends to be an integration it is not; the UI states its tier.
 | **Knowledge extraction** | Replays pre-extracted knowledge for this corpus, staged so the pipeline is visible. | Actually extracts from the document excerpts. |
 | **Text-to-speech** | Browser speech engine, shaped per character by the voice profile's `fallback` rate/pitch. Labelled `BROWSER SYNTH`. | ElevenLabs, one cast voice per character, resolved through `src/voice/voiceProfiles.ts`. Labelled `ELEVENLABS`. |
 | **Speech-to-text** | **Real** mic capture and waveform via `getUserMedia`; Web Speech transcription where the browser has it, otherwise a clearly-labelled `SIMULATED` transcript. | Scribe boundary in place (`src/voice/voice.ts`); blob capture intentionally not wired — untested code on stage is worse than an honest stub. |
-| **Video** | Procedural cinematic previs rendered from each scene's `shot` spec (env / time-of-day / mood), plus the text-to-video prompt the authoring pipeline would send. | `Scene.shot.videoUrl` is played directly if present. |
-
-**Video is an authoring feature by design.** Every scene carries a shot prompt;
-`requestClip()` in `src/ai/scenarioGenerator.ts` is where a text-to-video API
-would be called ahead of time, writing back to `Scene.shot.videoUrl`. The player
-never waits for a render. `SceneCanvas` already prefers a real clip when one
-exists, so connecting a provider changes no game code.
+| **Episode scripts** | Deterministic composer writes lines, choices and lessons from the knowledge items' own fields. Labelled `script · deterministic composer`. | Model writes the words into the code-built graph; discarded if it breaks validation, with the reason shown. |
+| **Video** | `requestClip()` resolves to **procedural previs**: no file, rendered live from the shot spec, badged `procedural previs · not AI-generated`. | Media server animates each clip scene's generated keyframe with Wan 2.2 I2V Fast on Replicate (~5 s, 480p), stores it, attaches `Scene.assets.video`. Badged `AI video · <model>`. |
+| **Backgrounds** | Procedural backdrop from the same spec. | Text-to-image (FLUX schnell on Replicate) for backgrounds and clip keyframes, stored, attached as `Scene.assets.background`. |
+| **Dialogue audio** | Not pre-rendered; browser voice at runtime, reported as `runtime voice`. | Each line voiced via the voice proxy and stored under `…/audio/`. |
+| **Storage** | No media server: assets live in the session. | Local disk under an object-store key layout (`company/…`), served at `/api/media/assets/`. |
 
 See `.env.example` to go live.
+
+---
+
+## Video generation
+
+**Video is an authoring-time asset, not a runtime feature.** Nobody generates a
+twenty-minute interactive film. The Studio renders four ~5 second clips for the
+beats that earn one — cold open, confrontation, incident, ending — and the
+player plays the stored files.
+
+```
+shot spec -> keyframe image (FLUX schnell) ─┐
+shot spec -> motionPrompt() ────────────────┴-> requestClip(shot, {episode, scene, image})
+          -> VideoProvider -> Wan 2.2 I2V Fast (Replicate) -> stored clip -> Scene.assets.video
+SceneCanvas:  AI clip  ->  AI background/keyframe  ->  procedural previs
+```
+
+- **`ShotSpec`** (`src/types.ts`) is the instruction: environment, time, mood,
+  prompt, `action`, `presentation: 'clip' | 'still'`, duration, camera.
+- **Image-to-video.** Each clip scene first gets its own generated keyframe.
+  `motionPrompt()` then turns the shot spec into camera movement, character
+  action and expression, environmental motion and framing, and Wan 2.2
+  animates that keyframe. The video model is asked for one shot of motion,
+  never for what happens next.
+- **`Scene.assets`** is the result: `AssetRef { kind, tier, provider, url,
+  storageKey }`. The reducer never reads either.
+- **`requestClip()`** (`src/media/video.ts`) is the seam. `VideoProvider` is
+  `generateClip / getStatus / getClipUrl`, with two implementations:
+  - `ServerVideoProvider` — a real model, via the media server, which alone
+    holds `REPLICATE_API_TOKEN`.
+  - `ProceduralPrevisProvider` — no model, no file.
+
+  Switching models is a change to `server/mediaServer.mjs`.
+- **Hybrid presentation.** `planEpisodeAssets()` (`src/media/assetPlan.ts`)
+  budgets clips (default 4). Every other scene gets one generated background —
+  shared by scenes with the same look — with the character sprite, name, line,
+  voice and a speaking waveform over it. A clip per dialogue line would be
+  neither affordable nor controllable.
+- **Honesty.** A procedural asset has no URL and is badged as not AI-generated
+  in the player, the Studio and the graph review. A failed render attaches
+  nothing; a missing file falls back a tier instead of a black frame.
+- **Audio is not video.** ElevenLabs voices the cast; it does not generate
+  scenes.
 
 ---
 
@@ -206,10 +280,12 @@ greetings, refusal line, sign-offs — lives in the character data.
 ## Risk mechanic
 
 Virtual credits only. No real money, no deposits, no cash-out, no external
-wallet. The odds are not random: the house estimate comes from the player's own
-mastery scores, and the *model inputs* panel shows the working. The point is to
-make the player price their own confidence before answering — a bad bet is
-information, not a loss.
+wallet. Three bets, readable at a glance: **SAFE 1.2× · RISKY 2× · ALL IN 4×**.
+The outcome is the authored quality of the choice the player makes — never
+chance, never a model. The mastery model's estimate is recorded silently at bet
+time and revealed with the result, so it never anchors the call. The tier chosen
+implies a confidence (55 / 75 / 95%); against actual outcomes that feeds the
+calibration read — overconfident, underconfident or calibrated — in the coach.
 
 ---
 
@@ -226,16 +302,25 @@ src/
     episodes/index.ts       12 episodes, grouped, each with an image
     episodes/firstDay.ts    33-scene episode graph, 4 acts, 3 adaptive variants
   engine/
-    gameStore.tsx           the reducer — every transition in the experience
-    adaptive.ts             mastery model, variant selection, progression
-    risk.ts                 wager odds derived from mastery
+    gameStore.tsx           the reducer — every transition, incl. publish gate
+    validateEpisode.ts      graph rules shared by reducer, Studio and tests
+    adaptive.ts             mastery model, selectVariant, player lenses
+    telemetry.ts            accuracy by threat, authority slowdown, calibration
+    risk.ts                 fixed-multiplier bets, hidden mastery estimate
   ai/
-    retrieval.ts            BM25 + scene scoping + confidence floor
-    characterAgent.ts       prompt assembly, live path, grounded offline composer
-    coach.ts                run analysis + narration
+    retrieval.ts            BM25 over any corpus + confidence floor + signals
+    characterAgent.ts       refusal gate, grounding trace, live + offline paths
+    coach.ts                telemetry-led run analysis + narration
     knowledgeAgent.ts       staged extraction pipeline
-    scenarioGenerator.ts    rule → playable scene + shot prompts
+    episodeGenerator.ts     topic + knowledge + mastery → validated episode graph
+    scenarioGenerator.ts    single-rule scene draft
     llm.ts                  the only provider seam
+  media/
+    video.ts                requestClip seam · VideoProvider · server + previs
+    image.ts                background provider · server + procedural
+    audio.ts                pre-rendered dialogue via the voice proxy
+    assetPlan.ts            clip budget, shared backgrounds, tier of a scene
+    mediaStatus.ts          media server discovery
   voice/
     voiceProfiles.ts        the only place ElevenLabs voice ids live
     voice.ts                proxy / direct / browser / simulated tiers
@@ -247,9 +332,12 @@ src/
     ConsequencePanel.tsx    CharacterChat.tsx  EpisodeProgress.tsx
     ui/                     CharacterAvatar (art + SVG fallback), EpisodeStill,
                             CharacterPortrait.tsx (SVG duotone), Grain, Bits
+    GroundingInspector.tsx  RunTelemetryPanel.tsx  ui/AssetTierBadge.tsx
+    studio/                 GraphReview · AssetStudio · PlayerLensPanel · StudioBits
     screens/                Home · EpisodeIntro · ScenePlayer · Results
                             PlayerProfile · Authoring (Studio)
 server/voiceProxy.mjs       holds ELEVENLABS_API_KEY; POST /api/voice/tts
+server/mediaServer.mjs      holds REPLICATE_API_TOKEN; keyframes, clips, audio, storage
 scripts/fetchAssets.mjs     downloads + crops character and episode artwork
 public/characters/*.jpg     640x640, one per character
 public/episodes/*.jpg       1280x720, one per episode
@@ -276,6 +364,32 @@ characters, every character resolves to an existing voice profile with a
 premade fallback id, every episode is grouped and cast from its own group, and
 **every character portrait and episode still actually exists on disk**.
 
+It also covers the architecture added around the engine:
+
+- **Validation catches what it claims to** — dangling branches, cycles, two
+  strong options, unresolvable citations, correctness wording, a missing ending.
+- **Transitions are deterministic** — the same `(state, action)` gives the same
+  state. A choice id from another scene, or an invented one, is ignored. Stakes
+  and multipliers come from the engine. A strong RISKY call pays exactly 2×.
+- **Generated episodes** — every topic produces a graph that validates offline,
+  with threat profiles, knowledge refs and shot specs. Workplace safety and
+  "the espresso machine" are refused, because the material does not cover them.
+  The generator is deterministic. A hostile script cannot add scenes, rewire
+  branches or change which option is strong. A script that leaks correctness
+  fails validation. An invalid graph cannot be published, a generated graph
+  cannot shadow an authored one, and the reducer routes player A and player B
+  to different act threes.
+- **Telemetry** — accuracy splits by threat source, the authority slowdown is
+  measured, and calibration is classified. The coach opens with the measured
+  sentence and names the biggest weakness.
+- **Video seam** — procedural previs resolves with no file and reports itself
+  as procedural. Against a fake media server, the real provider walks queued →
+  rendering → ready, attaches as AI video with its storage key, times out
+  instead of hanging, and treats an unknown status as failure.
+- **Media server** — spawned for real without a key: it reports video and
+  image unconfigured, refuses a render with 503, stores an upload under its
+  object-store key and serves it back, and rejects path traversal.
+
 `verify:walkthrough` renders the real app in jsdom and plays it twice — once
 taking the strong branch through all four acts, once the failing branch —
 clicking dialogue, wagering, deciding, asking the characters three questions
@@ -285,6 +399,18 @@ runs get *different* adaptive act threes. It also drives the cast switcher —
 arrow buttons and arrow keys, through all four rosters and back round — and
 asserts the hero and episode shelf follow the roster, and that selecting a
 character marks it pressed.
+
+It then runs the **Studio end to end**:
+
+1. Extracts the knowledge.
+2. Sees an uncovered topic refused.
+3. Generates *Phishing* and checks that the graph validates.
+4. Renders the visual and voice assets and asserts none of them claims to be AI without a key.
+5. Checks that the two player profiles get different act threes.
+6. Publishes, plays the generated episode through its first decision and consequence, and finds it on the home shelf.
+
+After the failing run, it clicks **generate my next episode** and lands on a new adaptive episode. The inspector
+assertions check that the off-topic question is classified `REFUSED` and explained against the floor.
 
 `verify:visual` drives **real Chrome** over the DevTools protocol and asserts
 the class of bug jsdom structurally cannot see — it has no layout engine and
@@ -321,8 +447,17 @@ React 18 · TypeScript · Tailwind · Framer Motion · Lucide · Vite
   `fallbackVoiceId`; there are only four premade young-male voices for five
   young-male characters, so on Free, Cartman and Bart share one, separated only
   by pitch and pacing. Both have distinct cast voices.
-- `FIRST DAY` is the only episode with a scene graph. The other eleven are
-  authored stubs — shelf metadata and card art, no graph yet.
-- One episode graph is hand-authored as the reference output of the pipeline;
-  the Studio screen generates scene fragments, not whole graphs.
-- Progression persists to `localStorage` only.
+- `FIRST DAY` is the only hand-authored graph; the other eleven shelf entries
+  are stubs. Generated episodes are real graphs, but they all follow one
+  structure: cold open, two decisions, adaptive act, ending.
+- **The fal.ai path has not been exercised against the live API in this repo**
+  — no key was available. The HTTP contract follows fal's documented queue API,
+  and the client side is tested against a fake server. Treat the first real
+  render as the integration test.
+- The media server keeps render jobs in memory (a restart loses in-flight
+  jobs) and stores to local disk. `putObject()` is the one function an S3/R2
+  adapter replaces.
+- Offline, the knowledge agent can only replay the shipped corpus. A newly
+  uploaded document yields no rules without a language model, and the Studio
+  says so.
+- Progression and published episodes persist to `localStorage` only.

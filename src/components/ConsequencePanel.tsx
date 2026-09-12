@@ -2,8 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, ArrowRight, BookOpen, CheckCircle2, Coins, MessageSquare, MinusCircle } from 'lucide-react'
 import { useState } from 'react'
 import { getCharacter } from '@/content/characters'
-import { knowledgeById } from '@/content/knowledge'
-import type { Scene, WagerResult } from '@/types'
+import type { KnowledgeItem, Scene, WagerResult } from '@/types'
 import { verdictHeadline } from '@/engine/risk'
 import { Btn } from './ui/Bits'
 
@@ -18,14 +17,19 @@ const TONES = {
   mixed: { accent: '#F5A524', Icon: MinusCircle, label: 'outcome' },
 } as const
 
+const TIER_LABEL = { safe: 'SAFE', risky: 'RISKY', allin: 'ALL IN' } as const
+
 export function ConsequencePanel({
   scene,
   wager,
+  knowledge,
   onContinue,
   onTalk,
 }: {
   scene: Scene
   wager: WagerResult | null
+  /** Resolves citations against the episode's own knowledge, then the base. */
+  knowledge: (id: string) => KnowledgeItem | undefined
   onContinue: () => void
   onTalk: (characterId: string) => void
 }) {
@@ -67,21 +71,23 @@ export function ConsequencePanel({
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.28, duration: 0.5 }}
-            className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-bone/10 py-3"
+            className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-bone/10 py-3"
           >
             <span className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-signal">
               <Coins size={12} />
               {verdictHeadline(wager.won ? 'win' : wager.payout > 0 ? 'push' : 'loss')}
             </span>
-            <span className="font-mono text-[11px] text-bone-faint">
-              staked {wager.staked} · returned {wager.payout} ·{' '}
-              <span className={wager.payout - wager.staked >= 0 ? 'text-good' : 'text-danger'}>
-                {wager.payout - wager.staked >= 0 ? '+' : ''}
-                {wager.payout - wager.staked} cr
-              </span>
+            <span className="border border-bone/15 px-2 py-[2px] font-mono text-[10px] uppercase tracking-[0.14em] text-bone-dim">
+              {TIER_LABEL[wager.tier]} {wager.multiplier}×
             </span>
-            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
-              model said {Math.round(wager.estimate * 100)}%
+            <span
+              className={`font-sans text-[16px] font-bold tabular-nums ${wager.payout - wager.staked >= 0 ? 'text-good' : 'text-danger'}`}
+            >
+              {wager.payout - wager.staked >= 0 ? '+' : ''}
+              {wager.payout - wager.staked} cr
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint sm:ml-auto">
+              mastery model had you at {Math.round(wager.estimate * 100)}%
             </span>
           </motion.div>
         )}
@@ -109,7 +115,7 @@ export function ConsequencePanel({
           <div className="flex flex-wrap items-center gap-2">
             <BookOpen size={12} className="text-bone-faint" />
             {outcome.citations.map((id) => {
-              const k = knowledgeById(id)
+              const k = knowledge(id)
               if (!k) return null
               const open = openCite === id
               return (
@@ -134,7 +140,7 @@ export function ConsequencePanel({
                 className="overflow-hidden"
               >
                 {(() => {
-                  const k = knowledgeById(openCite)!
+                  const k = knowledge(openCite)!
                   return (
                     <div className="glass mt-3 p-4">
                       <div className="t-eyebrow mb-1.5 text-signal">{k.topic}</div>

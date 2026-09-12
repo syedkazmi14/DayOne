@@ -1,17 +1,21 @@
-import { memo, useMemo } from 'react'
-import type { ShotSpec } from '@/types'
+import { memo, useMemo, useState } from 'react'
+import type { SceneAssets, ShotSpec } from '@/types'
 
 /* ============================================================================
- * SCENE CANVAS — procedural cinematic previs.
+ * SCENE CANVAS — plays whatever visual asset the scene was authored with.
  *
- * The architecture treats video as a pre-generated asset: if `shot.videoUrl`
- * exists it plays, full stop. When it does not — which is every scene in this
- * prototype — this renders a graded, layered, moving composition from the shot
- * spec instead of a grey "video placeholder" box.
+ *   1. a generated clip        (Scene.assets.video)       major beats
+ *   2. a generated background  (Scene.assets.background)  dialogue scenes
+ *   3. procedural previs       rendered live from the shot spec
  *
- * Nothing here is generated at runtime by a model. It is geometry and colour
- * derived from `env`, `time` and `mood`.
+ * Video is a pre-generated asset: nothing here calls a model, and it does not
+ * know or care which provider made a file. A file that fails to load drops to
+ * the next tier instead of leaving a black frame. Procedural previs is geometry
+ * and colour derived from `env`, `time` and `mood` — and the player's tier
+ * badge (ui/AssetTierBadge) says so.
  * ========================================================================== */
+
+const VIGNETTE = 'linear-gradient(180deg, rgba(0,0,0,.68) 0%, rgba(0,0,0,.12) 24%, rgba(0,0,0,.2) 52%, rgba(0,0,0,.92) 100%)'
 
 interface Palette {
   skyTop: string
@@ -311,14 +315,17 @@ export const SceneCanvas = memo(function SceneCanvas({
   shot,
   sceneKey,
   paused = false,
+  assets,
 }: {
   shot: ShotSpec
   sceneKey: string
   paused?: boolean
+  assets?: SceneAssets
 }) {
   const p = PALETTES[shot.time]
   const grade = GRADES[shot.mood]
   const Env = ENVS[shot.env]
+  const [failed, setFailed] = useState<string | null>(null)
 
   const dust = useMemo(() => {
     const r = rand(sceneKey.length * 97 + shot.env.length)
@@ -331,20 +338,42 @@ export const SceneCanvas = memo(function SceneCanvas({
     }))
   }, [sceneKey, shot.env])
 
+  const video = assets?.video?.tier === 'generated' ? assets.video.url : undefined
+  const background = assets?.background?.tier === 'generated' ? assets.background.url : undefined
+
   // A real pre-generated clip takes precedence — the whole point of the design.
-  if (shot.videoUrl) {
+  if (video && failed !== video) {
     return (
       <div className="absolute inset-0 overflow-hidden bg-black">
         <video
-          key={shot.videoUrl}
-          src={shot.videoUrl}
+          key={video}
+          src={video}
           autoPlay
           muted
           loop
           playsInline
+          onError={() => setFailed(video)}
           className="h-full w-full object-cover"
         />
         <div className="absolute inset-0" style={{ background: grade.color, opacity: grade.opacity, mixBlendMode: grade.blend }} />
+        <div className="pointer-events-none absolute inset-0" style={{ background: VIGNETTE }} />
+      </div>
+    )
+  }
+
+  // Dialogue scenes: a generated plate with slow camera movement under the sprites.
+  if (background && failed !== background) {
+    return (
+      <div className="absolute inset-0 overflow-hidden bg-ink-900">
+        <div
+          key={background}
+          className={paused ? '' : 'animate-kenburns'}
+          style={{ position: 'absolute', inset: '-8%', willChange: 'transform' }}
+        >
+          <img src={background} alt="" draggable={false} onError={() => setFailed(background)} className="h-full w-full object-cover" />
+        </div>
+        <div className="pointer-events-none absolute inset-0" style={{ background: grade.color, opacity: grade.opacity, mixBlendMode: grade.blend }} />
+        <div className="pointer-events-none absolute inset-0" style={{ background: VIGNETTE }} />
       </div>
     )
   }
@@ -399,10 +428,7 @@ export const SceneCanvas = memo(function SceneCanvas({
       {shot.mood === 'alarm' && (
         <div className="pointer-events-none absolute inset-0 scanlines opacity-60" />
       )}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{ background: 'linear-gradient(180deg, rgba(0,0,0,.68) 0%, rgba(0,0,0,.12) 24%, rgba(0,0,0,.2) 52%, rgba(0,0,0,.92) 100%)' }}
-      />
+      <div className="pointer-events-none absolute inset-0" style={{ background: VIGNETTE }} />
     </div>
   )
 })

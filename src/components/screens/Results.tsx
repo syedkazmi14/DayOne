@@ -1,8 +1,11 @@
 import { motion } from 'framer-motion'
-import { ArrowRight, BrainCircuit, Check, Coins, Minus, User, X } from 'lucide-react'
+import { ArrowRight, BrainCircuit, Check, Coins, Minus, Sparkles, User, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { generateCoachAnalysis, type CoachAnalysis } from '@/ai/coach'
+import { generateEpisode, topicForWeakness } from '@/ai/episodeGenerator'
 import { llmLabel } from '@/ai/llm'
+import { corpusFor } from '@/ai/retrieval'
+import { RunTelemetryPanel } from '../RunTelemetryPanel'
 import { concepts, conceptLabel } from '@/content/knowledge'
 import { useGame } from '@/engine/gameStore'
 import { growth } from '@/engine/adaptive'
@@ -18,8 +21,28 @@ const MARK = {
 export function Results() {
   const { state, dispatch, episode } = useGame()
   const [coach, setCoach] = useState<CoachAnalysis | null>(null)
+  const [nextGen, setNextGen] = useState<{ busy: boolean; error?: string }>({ busy: false })
   const decisions = state.decisionsThisEpisode
   const score = state.finalScore ?? 0
+
+  /** Close the loop: weakest concept -> topic -> a new episode for this player's mastery. */
+  async function generateNext() {
+    if (!coach || !episode) return
+    setNextGen({ busy: true })
+    try {
+      const { episode: next, report } = await generateEpisode({
+        topic: topicForWeakness(coach.nextFocus),
+        groupId: episode.groupId,
+        mastery: state.player.mastery,
+        corpus: corpusFor(episode.knowledge),
+      })
+      if (!report.ok) throw new Error(`generated graph failed validation: ${report.errors[0]?.message}`)
+      dispatch({ type: 'PUBLISH_EPISODE', episode: next, status: 'published' })
+      dispatch({ type: 'SELECT_EPISODE', episodeId: next.id })
+    } catch (e) {
+      setNextGen({ busy: false, error: (e as Error).message })
+    }
+  }
 
   useEffect(() => {
     let alive = true
@@ -43,7 +66,10 @@ export function Results() {
     <div className="relative h-full overflow-y-auto">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[62vh]">
         {episode?.scenes[episode.entrySceneId] && (
-          <SceneCanvas shot={(episode.scenes.s_end ?? episode.scenes[episode.entrySceneId]).shot} sceneKey="results" />
+          <SceneCanvas
+            shot={(Object.values(episode.scenes).find((s) => s.kind === 'ending') ?? episode.scenes[episode.entrySceneId]).shot}
+            sceneKey="results"
+          />
         )}
         <div className="absolute inset-0 bg-gradient-to-b from-ink-900/55 via-ink-900/85 to-ink-900" />
       </div>
@@ -165,6 +191,8 @@ export function Results() {
           )}
         </motion.div>
 
+        {coach && <RunTelemetryPanel telemetry={coach.telemetry} />}
+
         {/* mastery movement */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }} className="mt-12">
           <Eyebrow className="mb-5">what the system learned about you</Eyebrow>
@@ -188,13 +216,23 @@ export function Results() {
         <Rule label="next" />
 
         <div className="mt-8 flex flex-wrap items-center gap-3">
-          <Btn onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
-            Next episode <ArrowRight size={13} />
+          <Btn onClick={() => void generateNext()} disabled={!coach || nextGen.busy}>
+            <Sparkles size={13} />
+            {nextGen.busy ? 'generating…' : 'generate my next episode'}
+          </Btn>
+          <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
+            episodes <ArrowRight size={13} />
           </Btn>
           <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'profile' })}>
             <User size={13} /> Employee profile
           </Btn>
         </div>
+        {coach && !nextGen.error && (
+          <p className="mt-3 font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
+            built from your weakest area · {coach.nextFocus.map((c) => conceptLabel(c).toLowerCase()).join(' + ')}
+          </p>
+        )}
+        {nextGen.error && <p className="mt-3 font-mono text-[10px] text-danger">{nextGen.error}</p>}
       </div>
     </div>
   )
