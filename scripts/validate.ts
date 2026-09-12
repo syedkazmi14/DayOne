@@ -10,7 +10,15 @@ import { retrieve } from '../src/ai/retrieval'
 import { generateCoachAnalysis } from '../src/ai/coach'
 import { applyDecision, baselineMastery, weakestConcept, episodeScore } from '../src/engine/adaptive'
 import { estimateSuccess, wagerOptions } from '../src/engine/risk'
-import type { ConceptId, DecisionRecord, Scene } from '../src/types'
+import {
+  partitionValidItems,
+  sanitizeText,
+  validateKnowledgeItem,
+  validateKnowledgeSet,
+} from '../src/content/validateKnowledge'
+import { MAX_FILE_BYTES, ParseError, parseText, slugifyName } from '../src/ingest/parse'
+import { contentStore, ReadOnlyStoreError } from '../src/data/contentStore'
+import type { ConceptId, DecisionRecord, KnowledgeItem, Scene } from '../src/types'
 
 let fails = 0
 const ok = (cond: boolean, msg: string) => {
@@ -135,14 +143,10 @@ console.log(`${episodes.length} episodes across ${characterGroups.length} groups
 
 /* ------------------------------------------------------------ knowledge */
 section('KNOWLEDGE BASE')
-ok(new Set(knowledgeBase.map(k => k.id)).size === knowledgeBase.length, 'duplicate knowledge ids')
-for (const k of knowledgeBase) {
-  ok(!!k.source.doc && !!k.source.section, `${k.id} not citable`)
-  ok(k.concepts.every(c => concepts.some(x => x.id === c)), `${k.id} unknown concept`)
-  ok(k.recommended.length > 0 && k.prohibited.length > 0, `${k.id} missing do/do-not`)
-}
-const covered = new Set(knowledgeBase.flatMap(k => k.concepts))
-ok(covered.size === concepts.length, `concepts with no knowledge: ${concepts.filter(c => !covered.has(c.id)).map(c => c.id)}`)
+/* The rules live in src/content/validateKnowledge.ts so the ingest path and
+ * this suite enforce one definition. Each structured error becomes one FAIL. */
+const kb = validateKnowledgeSet(knowledgeBase, { requireFullCoverage: true })
+for (const e of kb.errors) ok(false, `${e.itemId} · ${e.field}: ${e.message}`)
 console.log(`${knowledgeBase.length} rules · ${concepts.length} concepts · all citable`)
 
 /* ------------------------------------------------------------ retrieval */
@@ -264,6 +268,133 @@ const mc = await generateCoachAnalysis({ decisions: mixed, before: baselineMaste
 console.log(`\n  [mixed] ${mc.headline}`)
 mc.paragraphs.forEach(p => console.log('   · ' + p.slice(0, 160) + (p.length > 160 ? '…' : '')))
 ok(mc.paragraphs.some(p => /faster|speed|quickest/i.test(p)), 'mixed run should detect the speed signal')
+
+/* ------------------------------------------------ ingest: validation rules */
+section('INGEST · KNOWLEDGE VALIDATION')
+
+const validItem: KnowledgeItem = {
+  id: 'K-TST-01',
+  topic: 'Test rule',
+  rule: 'Report anything that looks wrong through the Security Portal.',
+  severity: 'high',
+  commonMistake: 'Assuming somebody else already reported it.',
+  consequence: 'Nobody reports it and containment starts a day late.',
+  edgeCases: ['Uncertainty is not a reason to wait.'],
+  recommended: ['Report it'],
+  prohibited: ['Staying quiet'],
+  concepts: ['incident_reporting'],
+  source: { doc: 'Test Handbook', section: '1.1 Reporting', page: 1 },
+}
+const bad = (patch: Partial<KnowledgeItem>): KnowledgeItem => ({ ...validItem, ...patch })
+const badFields = (item: KnowledgeItem) => validateKnowledgeItem(item).map(e => e.field)
+
+ok(validateKnowledgeItem(validItem).length === 0, 'a well-formed item should pass clean')
+ok(badFields(bad({ rule: '' })).includes('rule'), 'empty rule should fail')
+ok(badFields(bad({ topic: '   ' })).includes('topic'), 'whitespace-only topic should fail')
+ok(badFields(bad({ severity: 'urgent' as KnowledgeItem['severity'] })).includes('severity'), 'unknown severity should fail')
+ok(badFields(bad({ concepts: ['time_travel' as ConceptId] })).includes('concepts'), 'unknown concept should fail')
+ok(badFields(bad({ concepts: [] })).includes('concepts'), 'empty concepts should fail')
+ok(badFields(bad({ recommended: [] })).includes('recommended'), 'empty recommended should fail')
+ok(badFields(bad({ prohibited: [] })).includes('prohibited'), 'empty prohibited should fail')
+ok(badFields(bad({ source: { doc: '', section: '1.1' } })).includes('source.doc'), 'uncitable doc should fail')
+ok(badFields(bad({ source: { doc: 'D', section: '' } })).includes('source.section'), 'uncitable section should fail')
+ok(badFields(bad({ rule: 'x'.repeat(1300) })).includes('rule'), 'oversized rule should fail')
+ok(validateKnowledgeItem(bad({ id: '' }), 'item[7]').some(e => e.itemId === 'item[7]'), 'an id-less item should be labelled by ref')
+
+const dupes = validateKnowledgeSet([validItem, { ...validItem, topic: 'Restated' }])
+ok(dupes.duplicateIds.includes('K-TST-01'), 'duplicate ids should be reported')
+ok(dupes.errors.some(e => e.field === 'id'), 'duplicate id should raise an error')
+
+const partial = validateKnowledgeSet([validItem])
+ok(partial.uncoveredConcepts.length === concepts.length - 1, 'a partial batch should report uncovered concepts')
+ok(!partial.errors.length, 'a partial batch is not an error without requireFullCoverage')
+ok(validateKnowledgeSet([validItem], { requireFullCoverage: true }).errors.some(e => e.itemId === '<set>'), 'full-coverage mode should flag the gap')
+
+const NUL = String.fromCharCode(0)
+const ZWSP = String.fromCharCode(0x200b)
+const dirty = `Report${NUL} it${ZWSP}  through\nthe portal.`
+ok(sanitizeText(dirty) === 'Report it through the portal.', `sanitizer should strip invisibles and collapse space, got "${sanitizeText(dirty)}"`)
+
+const split = partitionValidItems([validItem, bad({ id: 'K-TST-02', severity: 'urgent' as KnowledgeItem['severity'] })])
+ok(split.valid.length === 1 && split.rejected.length === 1, 'partition should split valid from rejected')
+ok(split.rejected[0].errors.some(e => e.field === 'severity'), 'a rejected item should carry its own errors')
+console.log(`${kb.errors.length} errors on the shipped base · ${split.valid.length} valid / ${split.rejected.length} rejected on a mixed batch`)
+
+/* ------------------------------------------------------- ingest: parsing */
+section('INGEST · DOCUMENT PARSING')
+
+const throws = (fn: () => unknown, code: string, msg: string) => {
+  try {
+    fn()
+    ok(false, `${msg} - nothing was thrown`)
+  } catch (e) {
+    ok(e instanceof ParseError && e.code === code, `${msg} - got ${(e as Error).message}`)
+  }
+}
+
+const txt = parseText('Report suspicious email.\n\n\n\nDo not forward it.', { name: 'Security Notes.txt' })
+ok(txt.type === 'handbook', 'txt should map to handbook')
+ok(txt.id === 'security-notes', `slug should derive from the filename, got ${txt.id}`)
+ok(txt.excerpt === 'Report suspicious email.\n\nDo not forward it.', 'paragraphs survive, blank runs collapse')
+ok(txt.pages >= 1, 'prose should report at least one page')
+ok(txt.yields.length === 0, 'a freshly parsed doc yields no knowledge yet')
+ok(slugifyName('Helix Security Handbook v4.2.pdf') === 'helix-security-handbook-v4-2', 'slugify should flatten punctuation')
+
+const md = parseText('# Heading\n\nUse **Report Phish**, see [the portal](https://helix.internal).\n\n- Never forward it\n', { name: 'policy.md' })
+ok(!md.excerpt.includes('#') && !md.excerpt.includes('**'), 'markdown markers should be stripped')
+ok(md.excerpt.includes('Heading') && md.excerpt.includes('Report Phish'), 'markdown text content should survive')
+ok(md.excerpt.includes('the portal') && !md.excerpt.includes('https://'), 'link text kept, url dropped')
+ok(md.excerpt.includes('Never forward it'), 'list item content should survive')
+ok(md.excerpt.split('\n\n').length === 3, `markdown paragraph breaks should survive list stripping, got ${JSON.stringify(md.excerpt)}`)
+
+const srt = parseText(
+  '1\n00:00:01,000 --> 00:00:04,000\nThe one-hour reporting window.\n\n2\n00:00:04,500 --> 00:00:07,000\nSession tokens survive a password change.\n',
+  { name: 'briefing.srt' },
+)
+ok(srt.type === 'video' && srt.pages === 0, 'transcripts are video with no page count')
+ok(!srt.excerpt.includes('-->') && !/\d{2}:\d{2}:\d{2}/.test(srt.excerpt), 'srt timestamps should be gone')
+ok(!/^\d+$/m.test(srt.excerpt), 'srt sequence numbers should be gone')
+ok(srt.excerpt.includes('one-hour reporting window') && srt.excerpt.includes('Session tokens'), 'srt speech should survive')
+
+const vtt = parseText(
+  'WEBVTT\n\nNOTE recorded 2026-09-12\n\n1\n00:00:01.000 --> 00:00:04.000 align:start position:0%\n<v Trainer>There is no blame attached to a report.</v>\n\n2\n00:00:04.000 --> 00:00:06.000\n<i>There is no blame attached to a report.</i>\n\n3\n00:00:06.000 --> 00:00:09.000\nIt is the four days of silence that cost us.\n',
+  { name: 'briefing.vtt' },
+)
+ok(!vtt.excerpt.includes('WEBVTT') && !vtt.excerpt.includes('NOTE'), 'vtt headers and notes should be gone')
+ok(!vtt.excerpt.includes('<v') && !vtt.excerpt.includes('<i>'), 'vtt cue tags should be stripped')
+ok(!vtt.excerpt.includes('align:start'), 'vtt cue settings should be gone')
+ok(vtt.excerpt.includes('no blame attached'), 'vtt speech should survive')
+ok(vtt.excerpt.split('no blame attached').length - 1 === 1, 'a repeated rolling-caption line should collapse to one')
+ok(vtt.excerpt.includes('four days of silence'), 'later cues should survive the dedupe')
+
+throws(() => parseText('', { name: 'empty.txt' }), 'empty_document', 'an empty file should be rejected')
+throws(() => parseText('   \n\n  \t ', { name: 'blank.txt' }), 'empty_document', 'a whitespace-only file should be rejected')
+throws(() => parseText('WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\n', { name: 'silent.vtt' }), 'empty_document', 'a transcript with no speech should be rejected')
+throws(() => parseText('x', { name: 'handbook.pdf' }), 'unsupported_type', 'pdf should be rejected until a pdf stage exists')
+throws(() => parseText('x', { name: 'noextension' }), 'unsupported_type', 'an extensionless file should be rejected')
+throws(() => parseText('x'.repeat(MAX_FILE_BYTES + 1), { name: 'huge.txt' }), 'file_too_large', 'an oversized file should be rejected')
+console.log('parsed txt/md/srt/vtt · rejects empty, unsupported and oversized')
+
+/* --------------------------------------------------------- content store */
+section('CONTENT STORE')
+const store = contentStore()
+ok(store.kind === 'static', 'the default store should be the static bundle')
+ok((await store.listKnowledge()).length === knowledgeBase.length, 'static store should serve the bundled knowledge')
+ok((await store.listSourceDocs()).length > 0, 'static store should serve the bundled source docs')
+
+const handedOut = await store.listKnowledge()
+handedOut.push(validItem)
+ok((await store.listKnowledge()).length === knowledgeBase.length, 'listKnowledge should hand back a copy, not the live array')
+
+let refusedWrite = false
+try {
+  await store.saveKnowledge([validItem])
+} catch (e) {
+  refusedWrite = e instanceof ReadOnlyStoreError
+}
+ok(refusedWrite, 'the static store should refuse writes rather than silently drop them')
+console.log(`store=${store.kind} · ${(await store.listKnowledge()).length} rules · ${(await store.listSourceDocs()).length} docs · read-only`)
+
 
 console.log('\n' + (fails === 0 ? '✅ ALL CHECKS PASSED' : `❌ ${fails} CHECK(S) FAILED`))
 process.exit(fails === 0 ? 0 : 1)
