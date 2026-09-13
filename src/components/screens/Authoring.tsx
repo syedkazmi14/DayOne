@@ -29,7 +29,7 @@ import type { Episode, KnowledgeItem, SourceDoc } from '@/types'
 import { VideoAssets, VisualAssets, VoiceAssets, type AssetRun } from '../studio/AssetStudio'
 import { GraphReview } from '../studio/GraphReview'
 import { PlayerLensPanel } from '../studio/PlayerLensPanel'
-import { StatusCard, Step, StudioProgress, type StepState } from '../studio/StudioBits'
+import { StatusCard, Step, StudioRail, type StepState } from '../studio/StudioBits'
 import { Btn, Chip, Eyebrow } from '../ui/Bits'
 
 /* ============================================================================
@@ -39,10 +39,12 @@ import { Btn, Chip, Eyebrow } from '../ui/Bits'
  *   1 knowledge   2 topic    3 generate   4 review story   5 images
  *   6 voices      7 video    8 act three  9 publish
  *
- * One step is open at a time. Two separate things decide what is on screen:
- * the per-step predicates in `stepStates` say which steps MAY be opened, and
- * the `cursor` says which open one is showing. Keeping them apart is what lets
- * a finished step be reopened without inventing a second notion of progress.
+ * One step is on screen at a time — the rest are not in the DOM at all, with
+ * navigation living in the fixed StudioRail header instead. Two separate
+ * things decide what that is: the per-step predicates in `stepStates` say
+ * which steps MAY be opened, and the `cursor` says which one is showing.
+ * Keeping them apart is what lets a finished step be reopened without
+ * inventing a second notion of progress.
  *
  * Everything here runs before anyone plays. The employee-facing game plays the
  * finished, validated graph and never calls any of this at runtime.
@@ -55,6 +57,22 @@ const IDLE_RUNS: Record<AssetKind, AssetRun> = {
   voice: { rows: {}, running: false },
   video: { rows: {}, running: false },
 }
+
+/* One source of truth for the nine step titles. StudioRail prints all nine
+ * up front, in the fixed header, while only one <Step> below ever renders —
+ * duplicating the strings between the two would just be an invitation for
+ * them to drift apart. */
+const STEP_TITLES = [
+  'Company knowledge',
+  'Pick a topic',
+  'Generate the episode',
+  'Review the story',
+  'Generate images',
+  'Generate voices',
+  'Generate video',
+  'Preview act three',
+  'Publish',
+] as const
 
 export function Authoring() {
   const { state, dispatch, group } = useGame()
@@ -84,8 +102,8 @@ export function Authoring() {
   const [draft, setDraft] = useState<Episode | null>(null)
   const [published, setPublished] = useState<string | null>(null)
 
-  /* Which step is showing. One step at a time: the rest are collapsed to a
-   * summary row, so this is the only thing that decides what is on screen. */
+  /* Which step is showing. Every other step is absent from the DOM, so this
+   * is the only thing that decides what is on screen. */
   const [cursor, setCursor] = useState(1)
   const prevStates = useRef<StepState[]>([])
   const advanced = useRef<Set<number>>(new Set())
@@ -265,7 +283,11 @@ export function Authoring() {
    * open step is showing. Keeping the two separate is what lets an earlier
    * step be reopened without inventing a second notion of progress. */
   const stepStates: StepState[] = [
-    step(false, extracted.length > 0 && !running),
+    /* Rules can outlive their documents in the content store, so extraction
+     * alone does not mean this step is finished — without a document behind
+     * them there is nothing left to run the agent on, and a checkmark here
+     * would sit next to a disabled button and a cold-start message. */
+    step(false, extracted.length > 0 && docs.length > 0 && !running),
     step(!extracted.length || running, !!topic),
     step(!topic || running, !!draft),
     step(!draft, !!report?.ok),
@@ -302,27 +324,31 @@ export function Authoring() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepKey, at])
 
-  /* Bring the opened step to the top. Nine collapsed rows are taller than the
-   * viewport, so opening step 9 from the bottom of the list would otherwise
-   * leave the thing you just asked for below the fold, half under the app's
-   * bottom scrim. `scroll-mt-32` on the step clears the fixed header. */
-  const firstPaint = useRef(true)
-  useEffect(() => {
-    if (firstPaint.current) {
-      firstPaint.current = false
-      return
-    }
-    /* Optional call, not just optional chaining on the element: jsdom has no
-     * scrollIntoView at all, and an effect that throws there takes the whole
-     * walkthrough harness down with it. */
-    document.querySelector(`[data-step="${at}"]`)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-  }, [at])
+  /* Per-step summaries, in the same order as STEP_TITLES and stepStates. They
+   * used to be passed one at a time as each <Step>'s `summary` prop, for that
+   * step's own collapsed row; now that only the active step is ever on screen
+   * there is no collapsed row left to read them, so the rail is their only
+   * audience. The computations are unchanged — just gathered in one place. */
+  const stepSummaries: (string | undefined)[] = [
+    docs.length ? `${extracted.length} rules · ${docs.length} documents` : `${extracted.length} rules`,
+    topic?.label,
+    draft?.code,
+    draft ? `${Object.keys(draft.scenes).length} scenes` : undefined,
+    hasImages ? 'rendered' : undefined,
+    hasVoice ? 'recorded' : undefined,
+    hasClips ? 'animated' : undefined,
+    'previewed',
+    published ? 'published' : undefined,
+  ]
+  const railSteps = STEP_TITLES.map((label, i) => ({ n: i + 1, label, state: stepStates[i], summary: stepSummaries[i] }))
 
   return (
     <div className="relative h-full overflow-y-auto">
       {/* Narrower than the old 1180px: one step at a time reads as a column of
-        * work, and a wide measure made every step look like a dashboard. */}
-      <div className="mx-auto max-w-[860px] px-6 pb-32 pt-36 sm:px-10">
+        * work, and a wide measure made every step look like a dashboard. Step
+        * 4's two-pane graph review is the one exception — it earns the extra
+        * room, and only while it is the step on screen. */}
+      <div className={`mx-auto px-6 pb-32 pt-36 sm:px-10 ${at === 4 ? 'max-w-[1100px]' : 'max-w-[860px]'}`}>
         {/* No back button here. This screen sits under the app header, which
           * already has Episodes in it, and two controls for one destination is
           * the same noise the nav comment warns about. */}
@@ -331,27 +357,28 @@ export function Authoring() {
             <Eyebrow className="text-signal">studio</Eyebrow>
             <h1 className="mt-2 font-sans text-[26px] font-semibold tracking-[-0.015em] text-bone">Episode builder</h1>
           </div>
-          <StudioProgress states={stepStates} at={at} onJump={openStep} />
+          <StudioRail steps={railSteps} at={at} onJump={openStep} />
         </div>
 
-        <div className="mt-8 space-y-1 border-t border-bone/10 pt-2">
+        <div className="mt-8 border-t border-bone/10 pt-2">
 
         {/* 1 ─ knowledge */}
+        {at === 1 && (
         <Step
           n={1}
-          title="Company knowledge"
+          title={STEP_TITLES[0]}
           detail="Only claims your documents can prove survive extraction."
           state={stepStates[0]}
-          /* Extracted rules outlive the documents they came from: they persist to
-            * the content store, the demo corpus never does. Claiming "0 documents"
-            * next to 14 rules reads like a bug, so the count only appears when
-            * there is something to count. */
-          summary={docs.length ? `${extracted.length} rules · ${docs.length} documents` : `${extracted.length} rules`}
-          open={at === 1}
-          revealed={at >= 1}
-          onOpen={() => openStep(1)}
         >
-          {docs.length === 0 ? (
+          {docs.length === 0 && extracted.length > 0 ? (
+            /* Rules can persist to the content store after their documents are
+              * gone — the demo corpus never persists at all — so a bare "add
+              * documents" line here would sit under rules that already exist
+              * and read like the screen forgot its own state. */
+            <p className="font-sans text-[13px] font-light leading-relaxed text-bone-faint">
+              You have {extracted.length} rules carried over from an earlier session, so add documents to extract more.
+            </p>
+          ) : docs.length === 0 ? (
             <p className="font-sans text-[13px] font-light leading-relaxed text-bone-faint">
               Add the documents this episode should be built from, or start from the demo corpus.
             </p>
@@ -446,17 +473,15 @@ export function Authoring() {
             </div>
           )}
         </Step>
+        )}
 
         {/* 2 ─ topic */}
+        {at === 2 && (
         <Step
           n={2}
-          title="Pick a topic"
+          title={STEP_TITLES[1]}
           detail="Pick a topic with enough rules, or type your own."
           state={stepStates[1]}
-          summary={topic?.label}
-          open={at === 2}
-          revealed={at >= 2}
-          onOpen={() => openStep(2)}
         >
           <div className="flex flex-wrap gap-2">
             {TOPICS.map((t) => {
@@ -504,17 +529,15 @@ export function Authoring() {
             cast from {group.name} · personalised for the current employee profile
           </p>
         </Step>
+        )}
 
         {/* 3 ─ generate */}
+        {at === 3 && (
         <Step
           n={3}
-          title="Generate the episode"
+          title={STEP_TITLES[2]}
           detail="The story structure is fixed and only the wording comes from your model."
           state={stepStates[2]}
-          summary={draft?.code}
-          open={at === 3}
-          revealed={at >= 3}
-          onOpen={() => openStep(3)}
         >
           {/* The model writes the wording, so the choice belongs next to the
             * button that spends it. Same button idiom as the topic picker
@@ -589,31 +612,27 @@ export function Authoring() {
             </div>
           )}
         </Step>
+        )}
 
         {/* 4 ─ review */}
+        {at === 4 && (
         <Step
           n={4}
-          title="Review the story"
+          title={STEP_TITLES[3]}
           detail="Open any scene to see its choices, consequences and citations."
           state={stepStates[3]}
-          summary={draft ? `${Object.keys(draft.scenes).length} scenes` : undefined}
-          open={at === 4}
-          revealed={at >= 4}
-          onOpen={() => openStep(4)}
         >
           {draft && report && <GraphReview episode={draft} report={report} />}
         </Step>
+        )}
 
         {/* 5 ─ visuals */}
+        {at === 5 && (
         <Step
           n={5}
-          title="Generate images"
+          title={STEP_TITLES[4]}
           detail="Renders a background for every scene and keyframes for the clips."
           state={stepStates[4]}
-          summary={hasImages ? 'rendered' : undefined}
-          open={at === 5}
-          revealed={at >= 5}
-          onOpen={() => openStep(5)}
         >
           <div className="mb-5">
             <StatusCard
@@ -625,17 +644,15 @@ export function Authoring() {
           </div>
           {draft && <VisualAssets episode={draft} onChange={setDraft} run={runs.visual} setRun={setRun.visual} />}
         </Step>
+        )}
 
         {/* 6 ─ voice */}
+        {at === 6 && (
         <Step
           n={6}
-          title="Generate voices"
+          title={STEP_TITLES[5]}
           detail="Voice every line in that character's own ElevenLabs voice."
           state={stepStates[5]}
-          summary={hasVoice ? 'recorded' : undefined}
-          open={at === 6}
-          revealed={at >= 6}
-          onOpen={() => openStep(6)}
         >
           <div className="mb-5">
             <StatusCard
@@ -647,17 +664,15 @@ export function Authoring() {
           </div>
           {draft && <VoiceAssets episode={draft} onChange={setDraft} run={runs.voice} setRun={setRun.voice} />}
         </Step>
+        )}
 
         {/* 7 ─ video */}
+        {at === 7 && (
         <Step
           n={7}
-          title="Generate video"
+          title={STEP_TITLES[6]}
           detail="Only key beats become clips and the rest stay stills."
           state={stepStates[6]}
-          summary={hasClips ? 'animated' : undefined}
-          open={at === 7}
-          revealed={at >= 7}
-          onOpen={() => openStep(7)}
         >
           <div className="mb-5">
             <StatusCard
@@ -669,31 +684,27 @@ export function Authoring() {
           </div>
           {draft && <VideoAssets episode={draft} onChange={setDraft} run={runs.video} setRun={setRun.video} />}
         </Step>
+        )}
 
         {/* 8 ─ lens */}
+        {at === 8 && (
         <Step
           n={8}
-          title="Preview act three"
+          title={STEP_TITLES[7]}
           detail="See which act three each employee profile gets from this episode."
           state={stepStates[7]}
-          summary="previewed"
-          open={at === 8}
-          revealed={at >= 8}
-          onOpen={() => openStep(8)}
         >
           {draft && <PlayerLensPanel episode={draft} />}
         </Step>
+        )}
 
         {/* 9 ─ ship */}
+        {at === 9 && (
         <Step
           n={9}
-          title="Publish"
+          title={STEP_TITLES[8]}
           detail="Preview it as an employee, then put it on the shelf."
           state={stepStates[8]}
-          summary={published ? 'published' : undefined}
-          open={at === 9}
-          revealed={at >= 9}
-          onOpen={() => openStep(9)}
         >
           <div className="flex flex-wrap items-center gap-3">
             <Btn
@@ -741,6 +752,7 @@ export function Authoring() {
             )}
           </div>
         </Step>
+        )}
 
         {/* Manual navigation, because auto-advance only fires on the step that
           * just completed — the asset steps are optional and would otherwise

@@ -7,34 +7,22 @@ const EASE = [0.16, 1, 0.3, 1] as const
 
 export type StepState = 'locked' | 'active' | 'done'
 
+/** Only the active step ever renders in the body — StudioRail (below) owns
+ * navigation now, so there is no collapsed row to be, and no reason for a
+ * step to know its neighbours. */
 export function Step({
   n,
   title,
   detail,
   state,
-  summary,
-  open,
-  revealed = true,
-  onOpen,
   children,
 }: {
   n: number
   title: string
   detail?: string
   state: StepState
-  summary?: string
-  open: boolean
-  /** False for steps past the cursor: a step you have not reached yet should
-    * not be announced, so it is not rendered at all rather than dimmed. */
-  revealed?: boolean
-  onOpen: () => void
   children?: ReactNode
 }) {
-  if (!revealed) return null
-
-  const isOpen = open && state !== 'locked'
-  const locked = state === 'locked'
-
   const badge = (
     <span
       className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border font-mono text-[11px] ${
@@ -44,41 +32,6 @@ export function Step({
       {state === 'done' ? <Check size={13} /> : String(n).padStart(2, '0')}
     </span>
   )
-
-  /* Only the opened body animates. An AnimatePresence swapping the collapsed
-   * row for the open one looked right in isolation, but every step runs its
-   * own, so reopening a step left a blank hole for over a second while the
-   * outgoing rows finished exiting. The row itself is chrome — it should just
-   * be there. */
-  if (!isOpen) {
-    const row = (
-      <>
-        {badge}
-        <span className="min-w-0 flex-1 truncate font-sans text-[14px] font-medium">{title}</span>
-        {state === 'done' && summary && (
-          <span className="shrink-0 truncate font-mono text-[10px] uppercase tracking-[0.08em] text-bone-faint">{summary}</span>
-        )}
-      </>
-    )
-    return locked ? (
-      <div
-        data-step={n}
-        className="flex w-full scroll-mt-32 items-center gap-4 rounded px-1 py-2.5 text-left text-bone-faint/70"
-        aria-disabled="true"
-      >
-        {row}
-      </div>
-    ) : (
-      <button
-        type="button"
-        data-step={n}
-        onClick={onOpen}
-        className="flex w-full scroll-mt-32 items-center gap-4 rounded px-1 py-2.5 text-left text-bone-dim transition-colors duration-200 hover:bg-bone/[0.03] hover:text-bone"
-      >
-        {row}
-      </button>
-    )
-  }
 
   return (
     <motion.section
@@ -122,48 +75,86 @@ export function StatusCard({
   )
 }
 
-export function StudioProgress({
-  states,
+/** Step chrome used to live in the flow as a stack of collapsed rows, so by
+ * step 7 the active step sat under six rows and started further down the
+ * page every single time. Pulling navigation into fixed header chrome fixes
+ * that at the cost of the rows themselves — this is the whole nine-step list,
+ * always, so it has to stay a single line. `overflow-x-auto` is the release
+ * valve if a future label is too long to fit rather than a layout that grows
+ * downward again. */
+export function StudioRail({
+  steps,
   at,
   onJump,
 }: {
-  states: StepState[]
+  steps: { n: number; label: string; state: StepState; summary?: string }[]
   at: number
   onJump: (n: number) => void
 }) {
   return (
-    <div className="flex items-center">
-      {states.map((state, i) => {
-        const n = i + 1
+    <nav aria-label="Studio steps" className="no-scrollbar flex items-center overflow-x-auto">
+      {steps.map((step, i) => {
+        const { n, label, state, summary } = step
         const active = n === at
         const locked = state === 'locked'
         const done = state === 'done'
-        return (
-          <div key={n} className="flex items-center">
-            <button
-              type="button"
-              disabled={locked}
-              onClick={() => onJump(n)}
-              aria-label={`Step ${n}${done ? ', done' : active ? ', current' : locked ? ', locked' : ''}`}
-              title={`Step ${n}`}
-              className="flex items-center justify-center p-1 disabled:cursor-default"
+        const ariaLabel = `Step ${n}${done ? ', done' : active ? ', current' : locked ? ', locked' : ''}`
+
+        const inner = (
+          <>
+            <span
+              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border font-mono text-[9px] ${
+                done ? 'border-good/50 text-good' : active ? 'border-signal/70 text-signal' : 'border-bone/15 text-bone-faint/50'
+              }`}
             >
-              <span
-                className={`block rounded-full transition-all duration-300 ${
-                  active
-                    ? 'h-[9px] w-[9px] bg-signal'
-                    : done
-                      ? 'h-[6px] w-[6px] bg-good/70'
-                      : 'h-[6px] w-[6px] bg-bone/18'
-                }`}
-              />
-            </button>
-            {i < states.length - 1 && (
-              <span className={`block h-px w-[10px] transition-colors duration-300 ${done ? 'bg-bone/35' : 'bg-bone/12'}`} />
+              {done ? <Check size={10} /> : n}
+            </span>
+            <span
+              className={`whitespace-nowrap font-sans text-[12px] font-medium ${
+                active ? 'text-bone' : done ? 'text-bone-dim' : 'text-bone-faint/40'
+              }`}
+            >
+              {label}
+            </span>
+          </>
+        )
+
+        return (
+          <div key={n} className="flex shrink-0 items-center">
+            {locked ? (
+              // Future steps are shown so the shape of the wizard reads at a
+              // glance, but they are not a list of destinations — a div, not
+              // a disabled button, so no focus ring implies otherwise.
+              <div aria-label={ariaLabel} aria-disabled="true" className="relative flex shrink-0 items-center gap-1.5 rounded px-2.5 py-2">
+                {inner}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onJump(n)}
+                aria-label={ariaLabel}
+                title={done ? summary : undefined}
+                className="relative flex shrink-0 items-center gap-1.5 rounded px-2.5 py-2 transition-colors duration-200 hover:bg-bone/[0.04]"
+              >
+                {inner}
+                {active && (
+                  // A sliding underline reads as "you are here" without the
+                  // glow the active dot used to carry — that glow was cut on
+                  // request and should not sneak back in through a new shape.
+                  <motion.span
+                    layoutId="studio-rail-active"
+                    className="absolute inset-x-2.5 -bottom-px h-px bg-signal"
+                    transition={{ duration: 0.35, ease: EASE }}
+                  />
+                )}
+              </button>
+            )}
+            {i < steps.length - 1 && (
+              <span className={`h-px w-4 shrink-0 transition-colors duration-300 ${done ? 'bg-bone/25' : 'bg-bone/10'}`} />
             )}
           </div>
         )
       })}
-    </div>
+    </nav>
   )
 }

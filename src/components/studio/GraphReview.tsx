@@ -1,17 +1,27 @@
-import { ChevronDown, GitBranch } from 'lucide-react'
 import { useState } from 'react'
 import { getCharacter } from '@/content/characters'
 import { conceptLabel } from '@/content/knowledge'
-import { presentationOf, visualTierOf } from '@/media/assetPlan'
 import { episodeKnowledgeResolver, successors, type GraphReport } from '@/engine/validateEpisode'
 import type { Episode, Scene } from '@/types'
 import { Chip, Eyebrow } from '../ui/Bits'
 
 /* ============================================================================
- * GRAPH REVIEW — Episode → Acts → Scenes → Choices → Consequences → Citations
- * → Shot specs → Assets. What the generator produced, and whether the engine
- * will accept it.
+ * REVIEW THE STORY — what the generator wrote, read the way it will be played.
+ *
+ * This step is named for the story, so the story is what it shows: who says
+ * what, which choices exist, what each one teaches. The graph underneath it
+ * (scene ids, branch pointers, shot specs) is real and occasionally necessary,
+ * but it is debugging information and lives behind a toggle.
+ *
+ * COLOUR MEANS ONE THING HERE: how good a choice is. It used to mean four —
+ * `signal` was simultaneously the decision kind, the acceptable-quality tier,
+ * the shot-spec rule and the citation id, so nothing could be read at a
+ * glance. Scene kind and outcome tone are words now. Adding a second colour
+ * axis to this file is a regression, not a feature.
  * ========================================================================== */
+
+/** The only colour axis. */
+const QUALITY_TONE = { best: 'good', acceptable: 'signal', poor: 'danger' } as const
 
 /** Breadth-first from the entry, so a scene's branches sit together. */
 export function orderedScenes(ep: Episode): Scene[] {
@@ -30,164 +40,193 @@ export function orderedScenes(ep: Episode): Scene[] {
   return out
 }
 
-const KIND_TONE = { cinematic: 'neutral', decision: 'signal', consequence: 'neutral', debrief: 'neutral', ending: 'cyan' } as const
-const QUALITY_TONE = { best: 'good', acceptable: 'signal', poor: 'danger' } as const
-const OUTCOME_TONE = { good: 'good', mixed: 'signal', bad: 'danger' } as const
-
 export function GraphReview({ episode, report }: { episode: Episode; report: GraphReport }) {
   const scenes = orderedScenes(episode)
+  const [act, setAct] = useState(episode.beats[0]?.act ?? 1)
+  const [picked, setPicked] = useState<string | null>(null)
+  const [tech, setTech] = useState(false)
+
+  const inAct = scenes.filter((s) => s.act === act)
+  /* Resolved rather than stored, so switching act cannot leave the pane
+   * showing a scene that is no longer in the list beside it. */
+  const scene = inAct.find((s) => s.id === picked) ?? inAct[0]
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {report.ok ? <Chip tone="good">validated · playable</Chip> : <Chip tone="danger">{report.errors.length} graph errors</Chip>}
-        <Chip>
-          {report.reachable}/{report.total} reachable
-        </Chip>
-        <Chip>{report.decisions} decisions</Chip>
-        <Chip tone="cyan">{report.adaptiveVariants} adaptive variants</Chip>
-        <Chip>{report.terminals.length} ending</Chip>
-      </div>
-      {!report.ok && (
-        <ul className="mt-3 space-y-1">
-          {report.errors.slice(0, 8).map((e, i) => (
-            <li key={i} className="font-mono text-[10px] text-danger">
-              {e.sceneId} · {e.message}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {episode.provenance && (
-        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1">
-          {Object.entries(episode.provenance.roles).map(([id, role]) => (
-            <span key={id} className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-bone-faint">
-              <span style={{ color: getCharacter(id).accent }}>{getCharacter(id).name}</span> · {role}
-            </span>
-          ))}
+      {report.ok ? (
+        /* One line, because four of the five numbers this replaced only ever
+         * said "nothing is wrong". Reachability is an exception report; it
+         * carries information when it fails, and none when it passes. */
+        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
+          <span className="text-good">validated · playable</span> · {report.total} scenes · {report.decisions} decisions ·{' '}
+          {report.adaptiveVariants} adaptive endings
+        </p>
+      ) : (
+        <div className="rounded border border-danger/40 bg-danger/[0.06] p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-danger">
+            {report.errors.length} graph {report.errors.length === 1 ? 'error' : 'errors'} · not playable
+          </p>
+          <ul className="mt-2 space-y-1">
+            {report.errors.slice(0, 8).map((e, i) => (
+              <li key={i} className="font-mono text-[10px] text-danger/90">
+                {e.sceneId} · {e.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
-      {episode.beats.map((beat) => {
-        const inAct = scenes.filter((s) => s.act === beat.act)
-        if (!inAct.length) return null
-        return (
-          <div key={beat.act} className="mt-7">
-            <Eyebrow className="mb-2">
-              act {beat.act} · {beat.label}
-            </Eyebrow>
-            <div className="space-y-px">
-              {inAct.map((s) => (
-                <SceneRow key={s.id} episode={episode} scene={s} />
-              ))}
-            </div>
-          </div>
-        )
-      })}
+      {/* Acts as tabs rather than four stacked sections: a review surface that
+        * grows with the episode cannot be scanned, and one act is a coherent
+        * unit of reading on its own. */}
+      <div className="no-scrollbar mt-5 flex gap-1 overflow-x-auto border-b border-bone/10">
+        {episode.beats.map((b) => {
+          const count = scenes.filter((s) => s.act === b.act).length
+          const on = b.act === act
+          return (
+            <button
+              key={b.act}
+              onClick={() => {
+                setAct(b.act)
+                setPicked(null)
+              }}
+              className={`shrink-0 border-b-2 px-3 py-2 text-left transition-colors ${
+                on ? 'border-bone text-bone' : 'border-transparent text-bone-faint hover:text-bone-dim'
+              }`}
+            >
+              <span className="block font-mono text-[10px] uppercase tracking-[0.14em]">{b.label}</span>
+              <span className="mt-0.5 block font-mono text-[9px] tracking-[0.12em] text-bone-faint">{count} scenes</span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="mt-4 grid gap-5 lg:grid-cols-[240px_1fr]">
+        {/* Left: every scene in this act, one line each. */}
+        <div className="space-y-px lg:border-r lg:border-bone/8 lg:pr-4">
+          {inAct.map((s) => {
+            const on = s.id === scene?.id
+            return (
+              <button
+                key={s.id}
+                onClick={() => setPicked(s.id)}
+                className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left transition-colors ${
+                  on ? 'bg-bone/[0.06] text-bone' : 'text-bone-dim hover:bg-bone/[0.03] hover:text-bone'
+                }`}
+              >
+                <span className="min-w-0 flex-1 truncate font-sans text-[12.5px]">{s.outcome?.banner ?? s.title ?? s.id}</span>
+                {/* Kind as a word. It used to be a coloured chip competing with
+                  * the choice-quality marks for the same attention. */}
+                <span className="shrink-0 font-mono text-[8.5px] uppercase tracking-[0.12em] text-bone-faint">
+                  {s.variants?.length ? 'adaptive' : s.kind}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Right: one scene, in full. Selecting replaces this pane rather than
+          * expanding beneath the list, so the page never lengthens. */}
+        {scene && <SceneDetail episode={episode} scene={scene} tech={tech} />}
+      </div>
+
+      <button
+        onClick={() => setTech((v) => !v)}
+        className="mt-5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint transition-colors hover:text-bone-dim"
+      >
+        {tech ? '− technical detail' : '+ technical detail'}
+      </button>
     </div>
   )
 }
 
-function SceneRow({ episode, scene: s }: { episode: Episode; scene: Scene }) {
-  const [open, setOpen] = useState(false)
+function SceneDetail({ episode, scene: s, tech }: { episode: Episode; scene: Scene; tech: boolean }) {
   const resolve = episodeKnowledgeResolver(episode)
-  const tier = visualTierOf(s.assets)
-  const isGate = !!s.variants?.length
 
   return (
-    <div className="rounded border border-bone/8 bg-ink-900/30">
-      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left">
-        {isGate ? <GitBranch size={12} className="shrink-0 text-cyan" /> : null}
-        <Chip tone={s.outcome ? OUTCOME_TONE[s.outcome.tone] : KIND_TONE[s.kind]}>{isGate ? 'adaptive' : s.kind}</Chip>
-        <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-bone">{s.outcome?.banner ?? s.title ?? s.id}</span>
-        <span className="hidden font-mono text-[9px] text-bone-faint sm:inline">{s.id}</span>
-        {!isGate && (
-          <span className="hidden font-mono text-[9px] uppercase tracking-[0.12em] text-bone-faint sm:inline">
-            {presentationOf(s)} · {tier === 'procedural' ? 'previs' : tier}
-          </span>
-        )}
-        {s.threat && (
-          <span className="hidden font-mono text-[9px] uppercase tracking-[0.12em] text-signal md:inline">
-            {s.threat.source} · {s.threat.pressure}
-          </span>
-        )}
-        <ChevronDown size={12} className={`shrink-0 text-bone-faint transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
+    <div className="min-w-0 space-y-5">
+      <div>
+        <Eyebrow>{s.variants?.length ? 'adaptive gate' : s.kind}</Eyebrow>
+        <h3 className="mt-1 font-sans text-[17px] font-semibold tracking-[-0.01em] text-bone">
+          {s.outcome?.banner ?? s.title ?? s.id}
+        </h3>
+      </div>
 
-      {open && (
-        <div className="space-y-4 border-t border-bone/8 px-3 py-3">
-          {isGate && (
-            <div className="space-y-1">
-              {s.variants!.map((v) => (
-                <div key={v.sceneId} className="font-mono text-[10px] text-bone-dim">
-                  weakest = <span className="text-cyan">{conceptLabel(v.conceptFocus)}</span> ⇒ {v.sceneId} ·{' '}
-                  {episode.scenes[v.sceneId]?.title}
-                </div>
-              ))}
+      {!!s.variants?.length && (
+        <div className="space-y-1">
+          {s.variants.map((v) => (
+            <p key={v.sceneId} className="font-sans text-[12px] font-light text-bone-dim">
+              Weakest in <span className="text-bone">{conceptLabel(v.conceptFocus)}</span> → {episode.scenes[v.sceneId]?.title}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {s.dialogue.length > 0 && (
+        <div className="space-y-2">
+          {s.dialogue.map((d, i) => (
+            <p key={i} className="font-sans text-[12.5px] font-light leading-relaxed text-bone-dim">
+              {/* Weight, not colour. Character accents are hex literals in
+                * characters.ts, so styling speakers with them made this the one
+                * screen that ignored the theme entirely. */}
+              <span className="mr-2 font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-bone">
+                {d.characterId === 'you' ? 'you' : getCharacter(d.characterId).name.split(' ')[0]}
+              </span>
+              {d.line}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {s.choices && (
+        <div className="space-y-1.5">
+          {s.choices.map((c) => (
+            <div key={c.id} className="flex flex-wrap items-center gap-2 rounded border border-bone/10 px-2.5 py-2">
+              <span className="min-w-0 flex-1 font-sans text-[12.5px] font-light text-bone">{c.text}</span>
+              <Chip tone={QUALITY_TONE[c.quality]}>{c.quality}</Chip>
             </div>
-          )}
+          ))}
+        </div>
+      )}
 
-          {s.dialogue.length > 0 && (
-            <div className="space-y-1.5">
-              {s.dialogue.map((d, i) => {
-                const ch = getCharacter(d.characterId)
-                return (
-                  <p key={i} className="font-sans text-[12px] font-light leading-snug text-bone-dim">
-                    <span className="mr-2 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: ch.accent }}>
-                      {d.characterId === 'you' ? 'you' : ch.name.split(' ')[0]}
-                    </span>
-                    {d.line}
-                    {s.assets?.audio?.[i] && <span className="ml-2 font-mono text-[8.5px] uppercase text-good">voiced</span>}
-                  </p>
-                )
-              })}
-            </div>
-          )}
+      {s.outcome && (
+        <div>
+          <p className="font-sans text-[12.5px] font-light leading-relaxed text-bone-dim">{s.outcome.lesson}</p>
+          <div className="mt-2 space-y-1">
+            {s.outcome.citations.map((id) => {
+              const k = resolve(id)
+              return (
+                <p key={id} className="font-mono text-[9.5px] leading-relaxed text-bone-faint">
+                  <span className="text-bone-dim">{id}</span> {k ? k.rule + ' — ' + k.source.doc + ' § ' + k.source.section : 'UNRESOLVED'}
+                </p>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
+      {tech && (
+        <div className="space-y-2 border-t border-bone/10 pt-4">
+          <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
+            {s.id}
+            {s.next ? ' → ' + s.next : ''}
+          </p>
           {s.choices && (
-            <div className="space-y-1.5">
+            <div className="space-y-0.5">
               {s.choices.map((c) => (
-                <div key={c.id} className="flex flex-wrap items-center gap-2 rounded border border-bone/10 px-2.5 py-2">
-                  <span className="font-mono text-[11px] text-bone-dim">{c.label}</span>
-                  <span className="min-w-0 flex-1 font-sans text-[12.5px] font-light text-bone">{c.text}</span>
-                  <Chip tone={QUALITY_TONE[c.quality]}>{c.quality}</Chip>
-                  <span className="font-mono text-[9px] text-bone-faint">→ {c.consequenceSceneId}</span>
-                </div>
+                <p key={c.id} className="font-mono text-[9.5px] text-bone-faint">
+                  {c.label} → {c.consequenceSceneId}
+                </p>
               ))}
             </div>
           )}
-
-          {s.outcome && (
-            <div>
-              <p className="font-sans text-[12px] font-light leading-relaxed text-bone-dim">{s.outcome.lesson}</p>
-              <div className="mt-2 space-y-1">
-                {s.outcome.citations.map((id) => {
-                  const k = resolve(id)
-                  return (
-                    <p key={id} className="font-mono text-[9.5px] leading-relaxed text-bone-faint">
-                      <span className="text-signal">{id}</span> {k ? `${k.rule} — ${k.source.doc} § ${k.source.section}` : 'UNRESOLVED'}
-                    </p>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {s.next && <p className="font-mono text-[9.5px] text-bone-faint">next → {s.next}</p>}
-
-          <div className="border-l-2 border-signal/30 pl-3">
-            <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-signal">
-              shot spec · {s.shot.env} · {s.shot.time} · {s.shot.mood} · {presentationOf(s)}
-              {s.shot.durationSec ? ` · ${s.shot.durationSec}s` : ''}
-              {s.shot.camera ? ` · ${s.shot.camera}` : ''}
-            </div>
-            <p className="mt-1 font-sans text-[11.5px] font-light leading-relaxed text-bone-dim">{s.shot.prompt}</p>
-            {(s.assets?.video || s.assets?.background) && (
-              <p className="mt-1 font-mono text-[9px] text-bone-faint">
-                {s.assets.video && `video: ${s.assets.video.tier} · ${s.assets.video.provider}${s.assets.video.storageKey ? ` · ${s.assets.video.storageKey}` : ''}`}
-                {s.assets.background && ` background: ${s.assets.background.tier} · ${s.assets.background.provider}`}
-              </p>
-            )}
+          <div>
+            <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
+              shot · {s.shot.env} · {s.shot.time} · {s.shot.mood}
+              {s.shot.durationSec ? ' · ' + s.shot.durationSec + 's' : ''}
+              {s.shot.camera ? ' · ' + s.shot.camera : ''}
+            </p>
+            <p className="mt-1 font-sans text-[11.5px] font-light leading-relaxed text-bone-faint">{s.shot.prompt}</p>
           </div>
         </div>
       )}
