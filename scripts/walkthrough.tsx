@@ -133,7 +133,7 @@ await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(15
 await flush(150)
 
 console.log('\n=== 1. HOME / EPISODE SELECT ===')
-ok(has('DayOne'), 'wordmark renders')
+ok(!!document.querySelector('img[src="/wordmark.png"]'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
 ok(!has('THE CLIENT') && !has('THE DEADLINE'), 'placeholder episodes are gone — the shelf is playable episodes only')
 ok(has('Rick and Morty'), 'selected roster named in the hero')

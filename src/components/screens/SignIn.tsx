@@ -43,14 +43,13 @@ export function SignIn({ onSignIn }: Props) {
           <Eyebrow>the onboarding deck, dramatized</Eyebrow>
 
           <div className="mt-3 overflow-hidden">
-            <motion.h1
+            <motion.div
               initial={{ y: '100%' }}
               animate={{ y: '0%' }}
               transition={{ duration: 0.7, ease: EASE }}
-              className="t-display text-[clamp(3rem,9vw,5.5rem)] text-bone"
             >
-              DayOne
-            </motion.h1>
+              <img src="/wordmark.png" alt="DayOne" className="h-[clamp(3rem,9vw,5.5rem)] w-auto" />
+            </motion.div>
           </div>
 
           <p className="mt-5 max-w-md font-sans text-[15.5px] font-light leading-relaxed text-bone-dim">

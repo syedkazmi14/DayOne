@@ -8,8 +8,9 @@ import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
 /* ============================================================================
  * Chrome. Present everywhere except inside a scene, where the frame is the UI.
  *
- * Type only — no icons. The nav sits over the page on a long fade rather than
- * in a bar of its own, so the artwork behind it is never cut by an edge.
+ * The nav is type only — no icons — and sits over the page on a long fade
+ * rather than in a bar of its own, so the artwork behind it is never cut by
+ * an edge. The wordmark is the one exception: a fixed image, not a font.
  *
  * The chrome cross-fades on the same curve and duration as the screen swap in
  * App.tsx. `inScene` flips synchronously on dispatch while AnimatePresence
@@ -118,7 +119,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }`}
           >
             <button className="shrink-0" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
-              <span className="font-sans text-[19px] font-semibold tracking-[-0.015em] text-bone">DayOne</span>
+              <img src="/wordmark.png" alt="DayOne" className="h-[22px] w-auto" />
             </button>
 
             <nav className="no-scrollbar flex min-w-0 flex-1 items-center justify-end gap-0.5 overflow-x-auto">
