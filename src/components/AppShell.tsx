@@ -22,10 +22,10 @@ import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
 
 /* No 'Profile' entry: the avatar at the right of the header is the profile
  * affordance, and two controls for one destination is noise. */
-const NAV: { view: View; label: string }[] = [
+const NAV: { view: View; label: string; admin?: true }[] = [
   { view: 'home', label: 'Episodes' },
   { view: 'shop', label: 'Shop' },
-  { view: 'authoring', label: 'Studio' },
+  { view: 'authoring', label: 'Studio', admin: true },
 ]
 
 /** Matches App.tsx's screen transition, so chrome and content move together. */
@@ -157,7 +157,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </button>
 
             <nav className="no-scrollbar flex min-w-0 flex-1 items-center justify-end gap-0.5 overflow-x-auto">
-              {NAV.map(({ view, label }) => (
+              {/* Filtered, not hidden: an employee's DOM should contain no
+                * Studio button at all, not one dimmed or styled away — the
+                * real boundary is the GOTO reducer case in gameStore, and this
+                * filter just keeps a control nobody can use off the screen. */}
+              {NAV.filter((item) => !item.admin || state.session?.role === 'admin').map(({ view, label }) => (
                 <button
                   key={view}
                   onClick={() => dispatch({ type: 'GOTO', view })}

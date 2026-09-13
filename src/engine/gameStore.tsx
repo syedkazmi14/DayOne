@@ -47,6 +47,15 @@ export type View =
   | 'results'
 
 /**
+ * The actual access boundary. AppShell's nav filter hides the Studio button
+ * from employees, but hiding a button is cosmetic — someone can still GOTO it
+ * directly (a stale link, a replayed action, devtools). This set is what the
+ * GOTO reducer case checks, so an employee session cannot land on the Studio
+ * no matter how the navigation is attempted.
+ */
+const ADMIN_ONLY: ReadonlySet<View> = new Set(['authoring'])
+
+/**
  * Who is using the app. Auth is a deliberate prototype stub — picking a
  * provider on the sign-in screen IS the sign-in. Nothing here is a credential
  * and nothing is verified; it exists to route employees to the lobby and
@@ -101,12 +110,15 @@ export interface GameState {
   questionsAsked: number
   finalScore: number | null
   creditsDelta: number
+  /** Whether the admin has pressed the Studio's terminal "Finish setup". */
+  setupDone: boolean
 }
 
 const STORAGE_KEY = 'onboard.player.v1'
 const PUBLISHED_KEY = 'onboard.published.v1'
 const SESSION_KEY = 'onboard.session.v1'
 const GROUP_KEY = 'onboard.group.v1'
+const SETUP_KEY = 'onboard.setup.v1'
 
 function loadSession(): Session | null {
   try {
@@ -165,6 +177,27 @@ const saveGroupId = (id: string) => {
     localStorage.setItem(GROUP_KEY, id)
   } catch {
     /* private mode — the choice lasts for this tab only */
+  }
+}
+
+/**
+ * Whether the admin has pressed "Finish setup" in the Studio. A plain boolean,
+ * so unlike loadSession/loadGroupId there is no untrusted shape to distrust —
+ * anything present just means the flag was set.
+ */
+function loadSetupDone(): boolean {
+  try {
+    return localStorage.getItem(SETUP_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+const saveSetupDone = (v: boolean) => {
+  try {
+    localStorage.setItem(SETUP_KEY, String(v))
+  } catch {
+    /* private mode — the flag lasts for this tab only */
   }
 }
 
@@ -270,6 +303,7 @@ export const initialState = (): GameState => {
   questionsAsked: 0,
   finalScore: null,
   creditsDelta: 0,
+  setupDone: loadSetupDone(),
   }
 }
 
@@ -296,6 +330,7 @@ export type Action =
   | { type: 'BUY_ITEM'; itemId: string }
   | { type: 'EQUIP_ITEM'; itemId: string }
   | { type: 'UNEQUIP_ITEM'; itemId: string }
+  | { type: 'FINISH_SETUP' }
 
 /** Authored episodes first — a generated graph can never shadow one. */
 export const findEpisode = (state: Pick<GameState, 'published'>, id: string | null | undefined): Episode | undefined =>
@@ -349,6 +384,11 @@ export function reducer(state: GameState, action: Action): GameState {
     case 'GOTO':
       /* Every destination is behind the sign-in gate. */
       if (!state.session) return state
+      /* The nav filter in AppShell only hides the Studio button — that is
+       * cosmetic. This is the real boundary: an employee dispatching GOTO
+       * authoring directly (stale link, replayed action, devtools) is refused
+       * here regardless of how the dispatch was reached. */
+      if (ADMIN_ONLY.has(action.view) && state.session.role !== 'admin') return state
       return { ...state, view: action.view }
 
     case 'SIGN_IN': {
@@ -549,6 +589,12 @@ export function reducer(state: GameState, action: Action): GameState {
         /* ignore */
       }
       return initialState()
+    }
+
+    case 'FINISH_SETUP': {
+      if (state.setupDone) return state
+      saveSetupDone(true)
+      return { ...state, setupDone: true }
     }
 
     case 'BUY_ITEM':
