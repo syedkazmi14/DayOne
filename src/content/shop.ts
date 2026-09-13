@@ -84,6 +84,7 @@ export const shopItems: ShopItem[] = [
     type: 'badge',
     price: 250,
     description: 'A pocket-sized hole in reality.',
+    image: '/collectibles/badges/portal.png',
   },
   {
     id: 'plumbus-badge',
@@ -91,6 +92,7 @@ export const shopItems: ShopItem[] = [
     type: 'badge',
     price: 250,
     description: 'Rubbed with fleeb juice. Allegedly.',
+    image: '/collectibles/badges/plumbus.png',
   },
   {
     id: 'chicken-badge',
@@ -99,13 +101,24 @@ export const shopItems: ShopItem[] = [
     price: 300,
     description: 'He will be back.',
     featured: true,
+    image: '/collectibles/badges/chicken.png',
   },
   {
-    id: 'certified-menace',
-    name: 'Certified Menace',
+    id: 'cheesy-poofs',
+    name: 'Cheesy Poofs',
     type: 'badge',
-    price: 350,
-    description: 'Signed off by nobody in particular.',
+    price: 300,
+    description: 'Rebranded snack. Same orange fingers.',
+    image: '/collectibles/badges/CheesyPoofs.webp',
+  },
+  {
+    id: 'pink-donut',
+    name: "Homer's Donut",
+    type: 'badge',
+    price: 300,
+    description: 'Pink frosting, rainbow sprinkles, zero nutritional value.',
+    isNew: true,
+    image: '/collectibles/badges/donut.png',
   },
 
   /* ----------------------------------------------------------- characters */
@@ -191,7 +204,7 @@ export const shopItems: ShopItem[] = [
     show: 'the-simpsons',
     description: 'Contractually obligated to be here.',
     isNew: true,
-    image: '/collectibles/Krustytheclown.png',
+    image: '/collectibles/Krustytheclown.jpg',
   },
 ]
 

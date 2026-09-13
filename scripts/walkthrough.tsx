@@ -610,7 +610,7 @@ ok(s.cosmetics?.equippedBorder === 'portal-frame' && s.cosmetics?.equippedTitle 
 await openProfile()
 await flush(300)
 ok(has('First Day Survivor'), 'profile shows equipped title')
-ok(has('Showcase') && has('Mr. Poopybutthole') && has('Placeholder art'), 'profile shows showcase with labelled placeholder art')
+ok(has('Showcase') && has('Mr. Poopybutthole') && !has('Placeholder art'), 'profile shows showcase with real character art')
 ok(!!document.querySelector('svg circle[stroke="#97CE4C"]'), 'profile avatar wears the border')
 
 console.log('\n=== 15. COSMETICS RULES ===')
@@ -625,7 +625,7 @@ ok(cos.equip(base, 'risk-taker') === base, 'cannot equip what you do not own')
 const twoTitles = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['risk-taker', 'policy-breaker'] } }
 const swapped = cos.equip(cos.equip(twoTitles, 'risk-taker'), 'policy-breaker')
 ok(swapped.cosmetics.equippedTitle === 'policy-breaker', 'equipping a title replaces the previous one')
-const badges = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['portal-badge', 'plumbus-badge', 'chicken-badge', 'certified-menace'] } }
+const badges = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['portal-badge', 'plumbus-badge', 'chicken-badge', 'cheesy-poofs'] } }
 const worn = badges.cosmetics.ownedItems.reduce((pl: typeof base, id: string) => cos.equip(pl, id), badges)
 ok(worn.cosmetics.equippedBadges.length === cos.MAX_EQUIPPED_BADGES, 'badge slots are capped')
 ok(cos.unequip(worn, 'portal-badge').cosmetics.equippedBadges.length === 2, 'unequip frees a badge slot')

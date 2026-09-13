@@ -10,7 +10,7 @@ export function ItemPreview({ item, playerName, large = false }: { item: ShopIte
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-ink-800">
       {item.type === 'border' && <ProfileAvatar name={playerName} borderId={item.id} size={large ? 104 : 76} />}
-      {item.type === 'badge' && <BadgeMark id={item.id} size={large ? 84 : 64} />}
+      {item.type === 'badge' && <BadgeMark id={item.id} image={item.image} size={large ? 84 : 64} />}
       {item.type === 'title' && (
         <div className="px-6 text-center">
           <div className={`font-sans font-semibold tracking-[-0.015em] text-bone ${large ? 'text-[22px]' : 'text-[17px]'}`}>
