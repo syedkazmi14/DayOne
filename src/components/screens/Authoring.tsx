@@ -258,10 +258,36 @@ export function Authoring() {
 
   const publish = (status: 'draft' | 'published') => {
     if (!draft) return
-    dispatch({ type: 'PUBLISH_EPISODE', episode: draft, status })
-    if (status === 'published') setPublished(draft.id)
+    // Previewing an episode that is already live must not take it off the shelf.
+    const next = published === draft.id ? 'published' : status
+    dispatch({ type: 'PUBLISH_EPISODE', episode: draft, status: next })
+    if (next === 'published') setPublished(draft.id)
   }
   const play = () => draft && dispatch({ type: 'SELECT_EPISODE', episodeId: draft.id })
+
+  /* Renders take minutes, and the wizard unmounts a step the moment you move
+   * off it. Once a draft is in the library, every asset that lands is saved
+   * there too — even after publishing, previewing, or leaving the Studio (the
+   * render loop outlives this screen; dispatch does too). */
+  const libraryRef = useRef(state.published)
+  libraryRef.current = state.published
+  const onAssets = (ep: Episode) => {
+    setDraft(ep)
+    const saved = libraryRef.current[ep.id]
+    if (saved) dispatch({ type: 'PUBLISH_EPISODE', episode: ep, status: saved.provenance?.status ?? 'draft' })
+  }
+
+  /* Pick a saved episode back up — to render what it is missing, or preview it —
+   * opening at its images step. */
+  const library = Object.values(state.published)
+  const openInStudio = (ep: Episode) => {
+    resetEpisode()
+    setDraft(ep)
+    setPublished(ep.provenance?.status === 'published' ? ep.id : null)
+    // Its finished steps are already done: auto-advance must not skip past them.
+    advanced.current = new Set(STEP_TITLES.map((_, i) => i + 1))
+    setCursor(5)
+  }
 
   const step = (locked: boolean, done: boolean): StepState => (locked ? 'locked' : done ? 'done' : 'active')
   const hasImages = !!draft && Object.values(draft.scenes).some((s) => s.assets?.background)
@@ -359,6 +385,42 @@ export function Authoring() {
           </div>
           <StudioRail steps={railSteps} at={at} onJump={openStep} />
         </div>
+
+        {/* Published library — every saved episode, draft or live. Opening one
+          * loads it into the builder below at its images step; it stays
+          * collapsed out of the way while an episode is being worked on. */}
+        {library.length > 0 && (
+          <details className="mt-6 border-y border-bone/10 py-3" open={!draft}>
+            <summary className="cursor-pointer select-none font-mono text-[10px] uppercase tracking-[0.16em] text-bone-dim hover:text-bone">
+              published library · {library.length} episode{library.length === 1 ? '' : 's'}
+            </summary>
+            <div className="mt-3 divide-y divide-bone/8">
+              {library.map((ep) => {
+                const live = ep.provenance?.status === 'published'
+                const editing = draft?.id === ep.id
+                return (
+                  <div key={ep.id} data-library-episode={ep.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                    <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-bone">{ep.title}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-bone-faint">{ep.topic}</span>
+                    <Chip tone={live ? 'good' : 'signal'}>{live ? 'live for employees' : 'draft'}</Chip>
+                    <Btn variant="outline" size="sm" onClick={() => openInStudio(ep)} disabled={editing}>
+                      {editing ? 'open' : 'open in studio'}
+                    </Btn>
+                    {live ? (
+                      <Btn variant="ghost" size="sm" onClick={() => dispatch({ type: 'REMOVE_EPISODE', episodeId: ep.id })}>
+                        unpublish
+                      </Btn>
+                    ) : (
+                      <Btn variant="ghost" size="sm" onClick={() => dispatch({ type: 'PUBLISH_EPISODE', episode: ep, status: 'published' })}>
+                        make live
+                      </Btn>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </details>
+        )}
 
         <div className="mt-8 border-t border-bone/10 pt-2">
 
@@ -642,7 +704,7 @@ export function Authoring() {
               tone={health ? 'good' : 'neutral'}
             />
           </div>
-          {draft && <VisualAssets episode={draft} onChange={setDraft} run={runs.visual} setRun={setRun.visual} />}
+          {draft && <VisualAssets episode={draft} onChange={onAssets} run={runs.visual} setRun={setRun.visual} />}
         </Step>
         )}
 
@@ -662,7 +724,7 @@ export function Authoring() {
               tone={ttsTier() === 'elevenlabs' ? 'good' : 'neutral'}
             />
           </div>
-          {draft && <VoiceAssets episode={draft} onChange={setDraft} run={runs.voice} setRun={setRun.voice} />}
+          {draft && <VoiceAssets episode={draft} onChange={onAssets} run={runs.voice} setRun={setRun.voice} />}
         </Step>
         )}
 
@@ -682,7 +744,7 @@ export function Authoring() {
               tone={health?.video.configured ? 'good' : 'neutral'}
             />
           </div>
-          {draft && <VideoAssets episode={draft} onChange={setDraft} run={runs.video} setRun={setRun.video} />}
+          {draft && <VideoAssets episode={draft} onChange={onAssets} run={runs.video} setRun={setRun.video} />}
         </Step>
         )}
 

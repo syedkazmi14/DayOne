@@ -1,5 +1,5 @@
 import type { Episode } from '@/types'
-import { MEDIA_BASE, mediaHealth } from '@/media/mediaStatus'
+import { MEDIA_BASE, mediaHealth, probeMediaServer } from '@/media/mediaStatus'
 
 /* ============================================================================
  * EPISODE LIBRARY — mirrored through the media server, the same way
@@ -17,7 +17,11 @@ import { MEDIA_BASE, mediaHealth } from '@/media/mediaStatus'
  * ========================================================================== */
 
 export async function loadLibrary(): Promise<Episode[] | null> {
-  if (!mediaHealth()) return null
+  // Wait for the probe: this runs as the app mounts, before the health check
+  // has answered, so reading the cached result here would always see "no
+  // server" — leaving a stale localStorage library in place and switching off
+  // every publish mirror for the session.
+  if (!(await probeMediaServer())) return null
   try {
     const res = await fetch(`${MEDIA_BASE}/episodes`)
     if (!res.ok) return null

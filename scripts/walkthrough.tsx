@@ -589,6 +589,10 @@ const exitBtn = document.querySelector<HTMLElement>('button[aria-label="Exit epi
 if (exitBtn) await act(async () => { exitBtn.click(); await sleep(200) })
 await flush(300)
 ok(has('Episode builder'), 'an admin leaving a preview returns to the Studio, not a show lobby')
+ok(has('published library') && has('live for employees'), 'the Studio lists the published episode in its library, still live')
+await click('open in studio')
+await flush(200)
+ok(has('Every scene gets a still'), 'open in studio reopens a saved episode at its images step')
 
 console.log('\n=== 11c. EMPLOYEE: THE ADMIN’S EPISODE, IN THE SHOW THEY PICKED ===')
 await click('account menu')

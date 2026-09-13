@@ -846,6 +846,39 @@ ok(voiced.status === 'stored' && voiced.asset?.kind === 'audio', 'a pre-rendered
 ok((await new RuntimeSpeechProvider().renderLine()).status === 'runtime', 'without ElevenLabs nothing claims to be pre-rendered')
 
 /* ------------------------------------------------ media server */
+section('SHARED LIBRARY · LOADS AFTER THE MEDIA PROBE')
+{
+  /* The app asks for the library as it mounts, before the media health probe
+   * has answered. Reading the cached (still empty) probe result there meant the
+   * library never loaded: the browser kept a stale localStorage copy and no
+   * publish was ever mirrored back. */
+  const realFetch = globalThis.fetch
+  const libraryEpisode = { ...phishing.episode, provenance: { ...phishing.episode.provenance!, status: 'published' as const } }
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input)
+    await new Promise((r) => setTimeout(r, 50))
+    const body = url.endsWith('/health')
+      ? {
+          video: { configured: false },
+          image: { configured: false },
+          audio: { configured: false },
+          content: { configured: true, kind: 'supabase', episodes: true },
+          storage: { kind: 'supabase' },
+        }
+      : url.endsWith('/episodes')
+        ? { episodes: [libraryEpisode] }
+        : {}
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  try {
+    const { loadLibrary } = await import('../src/data/episodeStore')
+    const loaded = await loadLibrary()
+    ok(loaded?.length === 1 && loaded[0].id === libraryEpisode.id, 'the shared library loads even when the app asks before the media server has answered')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+}
+
 section('ONE WORLD PER SHOW · PER-SHOW IMAGES AND CLIPS')
 {
   const { recastEpisode } = await import('../src/engine/recast')
