@@ -732,7 +732,10 @@ const server = createServer(async (req, res) => {
           return json(res, 422, { error: 'refused', message: `Gemini declined this image (${still.refused})${still.note ? `: ${still.note}` : ''}` })
         const ext = still.mime.includes('png') ? 'png' : still.mime.includes('webp') ? 'webp' : 'jpg'
         const stillKey = keys.image(episodeId, sceneId, scope.show, ext)
-        return json(res, 200, { url: await putObject(stillKey, still.bytes), storageKey: stillKey, provider: 'gemini', characters: references })
+        const stillUrl = await putObject(stillKey, still.bytes)
+        // A clip animates its still: once the still is redrawn, the stored clip is stale and must not be reused.
+        await removeObject(keys.video(episodeId, sceneId, scope.show))
+        return json(res, 200, { url: stillUrl, storageKey: stillKey, provider: 'gemini', characters: references })
       }
 
       const storageKey = keys.image(episodeId, sceneId, scope.show)
@@ -756,7 +759,9 @@ const server = createServer(async (req, res) => {
         return json(res, 502, { error: 'generation_failed', message: `Image generation ${prediction.status}${reason(prediction)}` })
       const imageUrl = outputUrl(prediction.output)
       if (!imageUrl) return json(res, 502, { error: 'no_image', message: 'Replicate returned no image.' })
-      return json(res, 200, { url: await putObject(storageKey, await download(imageUrl)), storageKey })
+      const imageStored = await putObject(storageKey, await download(imageUrl))
+      await removeObject(keys.video(episodeId, sceneId, scope.show))
+      return json(res, 200, { url: imageStored, storageKey })
     }
 
     if (p === '/api/media/video') {

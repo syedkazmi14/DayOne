@@ -14,6 +14,7 @@
  *                        `configured: false` and the app falls back to the
  *                        browser speech engine, labelled honestly in the UI.
  *   ELEVENLABS_MODEL     default eleven_turbo_v2_5
+ *   ELEVENLABS_STT_MODEL default scribe_v2 (speech-to-text)
  *   VOICE_PROXY_PORT     default 8787
  *   VOICE_PROXY_ORIGIN   extra allowed CORS origin (dev proxy needs none)
  *
@@ -21,6 +22,8 @@
  *   GET  /api/voice/health   { configured, model, provider }
  *   POST /api/voice/tts      { text, voiceId, fallbackVoiceId?, settings?,
  *                              modelId? } -> audio/mpeg
+ *   POST /api/voice/stt      raw recorded audio (content-type = its mime) -> { text }
+ *                            transcribed by ElevenLabs Scribe; the key stays here
  *
  * `voiceId` is the cast voice, usually a community ("shared library") voice,
  * which the API only serves to Creator tier and above. When it is rejected for
@@ -35,6 +38,13 @@ const PORT = Number(process.env.VOICE_PROXY_PORT ?? 8787)
 const API_KEY = process.env.ELEVENLABS_API_KEY ?? ''
 const MODEL = process.env.ELEVENLABS_MODEL ?? 'eleven_turbo_v2_5'
 const EXTRA_ORIGIN = process.env.VOICE_PROXY_ORIGIN ?? ''
+const STT_MODEL = process.env.ELEVENLABS_STT_MODEL ?? 'scribe_v2'
+/** Tests point this at a fake ElevenLabs. */
+const API_BASE = (process.env.ELEVENLABS_API_BASE ?? 'https://api.elevenlabs.io').replace(/\/$/, '')
+/** A spoken question, not a podcast: a few minutes of opus is well under this. */
+const MAX_AUDIO_BYTES = 10 * 1024 * 1024
+/** Shorter than this, the recorder captured nothing worth sending. */
+const MIN_AUDIO_BYTES = 1000
 
 /** Spoken dialogue, not documents. Caps cost and latency per request. */
 const MAX_CHARS = 1200
@@ -82,13 +92,53 @@ const readBody = (req) =>
     req.on('error', reject)
   })
 
+const readRaw = (req, max) =>
+  new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > max) {
+        reject(new Error('payload too large'))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+
+const extensionFor = (mime) => (/mp4|m4a|aac/.test(mime) ? 'mp4' : /ogg/.test(mime) ? 'ogg' : /wav/.test(mime) ? 'wav' : 'webm')
+
+/** Speech to text through ElevenLabs Scribe: the browser sends its recording, this adds the key. */
+async function transcribe(audio, mime) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS)
+  try {
+    const form = new FormData()
+    form.append('model_id', STT_MODEL)
+    form.append('language_code', 'en')
+    form.append('file', new Blob([audio], { type: mime || 'audio/webm' }), `question.${extensionFor(mime)}`)
+    const res = await fetch(`${API_BASE}/v1/speech-to-text`, { method: 'POST', signal: ctrl.signal, headers: { 'xi-api-key': API_KEY }, body: form })
+    if (!res.ok) return { ok: false, status: res.status, detail: await res.text().catch(() => '') }
+    const body = await res.json().catch(() => ({}))
+    return { ok: true, text: typeof body.text === 'string' ? body.text.trim() : '' }
+  } catch (e) {
+    const aborted = e?.name === 'AbortError'
+    return { ok: false, status: aborted ? 504 : 502, detail: aborted ? 'upstream timeout' : String(e?.message ?? e) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** One upstream attempt. Returns either audio or a structured failure. */
 async function synthesize({ voiceId, text, modelId, settings }) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS)
   try {
     const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+      `${API_BASE}/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
       {
         method: 'POST',
         signal: ctrl.signal,
@@ -121,16 +171,35 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://localhost:${PORT}`)
 
   if (req.method === 'GET' && url.pathname === '/api/voice/health')
-    return json(res, 200, { provider: 'elevenlabs', configured: !!API_KEY, model: MODEL })
+    return json(res, 200, { provider: 'elevenlabs', configured: !!API_KEY, model: MODEL, stt: !!API_KEY, sttModel: STT_MODEL })
 
-  if (req.method !== 'POST' || url.pathname !== '/api/voice/tts')
-    return json(res, 404, { error: 'not found' })
+  const route = req.method === 'POST' ? url.pathname : ''
+  if (route !== '/api/voice/tts' && route !== '/api/voice/stt') return json(res, 404, { error: 'not found' })
 
   if (!API_KEY)
     return json(res, 503, {
       error: 'not_configured',
       message: 'ELEVENLABS_API_KEY is not set on the voice proxy.',
     })
+
+  if (route === '/api/voice/stt') {
+    let audio
+    try {
+      audio = await readRaw(req, MAX_AUDIO_BYTES)
+    } catch {
+      return json(res, 413, { error: 'audio_too_large' })
+    }
+    if (audio.length < MIN_AUDIO_BYTES) return json(res, 400, { error: 'no_audio', message: 'Nothing was recorded.' })
+    const result = await transcribe(audio, String(req.headers['content-type'] ?? ''))
+    if (result.ok) return json(res, 200, { text: result.text })
+    console.warn(`[voice] stt failed: ${result.status} ${String(result.detail).slice(0, 200)}`)
+    return json(res, result.status === 504 ? 504 : 502, {
+      error: 'stt_failed',
+      status: result.status,
+      // Upstream detail can carry account metadata — keep it server-side.
+      message: 'Speech recognition failed upstream.',
+    })
+  }
 
   let payload
   try {
@@ -178,7 +247,7 @@ server.listen(PORT, () => {
   console.log(
     `[voice] proxy on http://localhost:${PORT}  ` +
       (API_KEY
-        ? `elevenlabs configured · model ${MODEL}`
+        ? `elevenlabs configured · model ${MODEL} · speech-to-text ${STT_MODEL}`
         : 'ELEVENLABS_API_KEY not set — the app will use the browser speech engine'),
   )
 })

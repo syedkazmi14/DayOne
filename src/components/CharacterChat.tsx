@@ -126,8 +126,16 @@ export function CharacterChat({ characterId, onClose }: { characterId: string; o
       mic.current = null
       setLevels(Array(BARS).fill(0.04))
       if (session) {
-        const text = await session.stop()
-        void send(text, true)
+        setInterim('transcribing…')
+        const text = (await session.stop()).trim()
+        if (text) {
+          setInterim('')
+          void send(text, true)
+        } else {
+          // Nothing understood: say so, rather than send a question the player never asked.
+          setInterim("didn't catch that — try again, or type it")
+          setTimeout(() => setInterim(''), 2800)
+        }
       }
       return
     }

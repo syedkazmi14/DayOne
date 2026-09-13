@@ -237,9 +237,9 @@ SceneCanvas:  AI clip  ->  AI background/keyframe  ->  procedural previs
   in the scene — that show's cast, from the recast — are drawn in, with their
   portraits from `public/characters` sent as reference images. Only the cold
   open and the incident are animated (Replicate, from the still). If Gemini
-  declines a character image, that still falls back to the setting and the
-  portrait goes on top; the player hides a portrait whenever the still already
-  draws that character.
+  declines a character image, that still falls back to the setting. Whoever is
+  speaking still appears as their portrait over the still, with their name,
+  line and voice.
 
 ### Content persistence
 

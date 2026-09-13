@@ -197,6 +197,13 @@ export function attachAsset(ep: Episode, item: AssetPlanItem, ref: AssetRef): Ep
     } else if (item.kind === 'video') a.video = ref
     else if (item.kind === 'image') a.background = ref
     else a.audio = { ...(a.audio ?? {}), [item.lineIndex!]: ref }
+    // A show's still retires any clip that is not that show's own — a clip from
+    // before per-show worlds would otherwise keep playing over the new still.
+    if (item.kind === 'image' && item.groupId) {
+      const stale = (v?: AssetRef) => !!v && !v.storageKey?.includes(`/${item.groupId}/videos/`)
+      if (other && stale(a.byShow?.[other]?.video)) a.byShow = { ...a.byShow, [other]: { ...a.byShow![other], video: undefined } }
+      if (!other && stale(a.video)) a.video = undefined
+    }
     scenes[id] = { ...s, assets: a }
   }
   return { ...ep, scenes }

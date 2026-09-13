@@ -161,9 +161,7 @@ export function ScenePlayer() {
               total={scene.dialogue.length}
               onAdvance={advance}
               voiceOn={voiceOn}
-              audio={scene.assets?.audio?.[state.dialogueIndex]}
-              inScene={!!scene.assets?.background?.characters?.includes(scene.dialogue[state.dialogueIndex]?.characterId ?? '')}
-            />
+              audio={scene.assets?.audio?.[state.dialogueIndex]}            />
           )}
 
           {state.phase === 'wager' && (

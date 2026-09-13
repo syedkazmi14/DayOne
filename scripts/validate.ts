@@ -936,6 +936,61 @@ section('ONE WORLD PER SHOW · PER-SHOW IMAGES AND CLIPS')
   ok(!recastEpisode(dressed, third).scenes[sid].assets?.background, 'a show with nothing rendered falls back to previs, never another show’s art')
   ok(recastEpisode(dressed, own) === dressed, 'the original show still gets the original episode')
   ok(visualsFor(dressed, sid, other)?.background?.url === '/other.jpg' && visualsFor(dressed, sid, own)?.background?.url === '/own.jpg', 'the Studio reads each show’s visuals')
+  const legacyClip = { kind: 'video' as const, tier: 'generated' as const, provider: 'test', url: '/old.mp4', storageKey: `company/episodes/${ep.id}/videos/${sid}.mp4`, createdAt: 'then' }
+  const withClip = (clip: typeof legacyClip) => ({ ...ep, scenes: { ...ep.scenes, [sid]: { ...ep.scenes[sid], assets: { video: clip } } } })
+  const retired = attachAsset(withClip(legacyClip), ownBg, img('/own-new.jpg'))
+  ok(!retired.scenes[sid].assets?.video && retired.scenes[sid].assets?.background?.url === '/own-new.jpg', 'a show’s still retires a clip left over from before per-show worlds')
+  const showClip = { ...legacyClip, storageKey: `company/episodes/${ep.id}/${own}/videos/${sid}.mp4` }
+  ok(attachAsset(withClip(showClip), ownBg, img('/own-new.jpg')).scenes[sid].assets?.video?.storageKey === showClip.storageKey, 'but keeps the clip that belongs to that show')
+}
+
+section('VOICE PROXY · SPEECH TO TEXT (fake ElevenLabs, no network)')
+{
+  const FAKE_XI_KEY = 'sk_fake_elevenlabs_key_for_tests_only'
+  const sttSeen: { url: string; key?: string; body: string }[] = []
+  const fakeEleven = createServer(async (req, res) => {
+    const chunks: Buffer[] = []
+    for await (const c of req) chunks.push(c as Buffer)
+    sttSeen.push({ url: req.url ?? '', key: req.headers['xi-api-key'] as string | undefined, body: Buffer.concat(chunks).toString('latin1') })
+    const known = req.url === '/v1/speech-to-text'
+    res.writeHead(known ? 200 : 404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(known ? { language_code: 'en', text: ' Why was that email suspicious? ' } : { detail: 'not found' }))
+  })
+  await new Promise<void>((r) => fakeEleven.listen(0, '127.0.0.1', () => r()))
+  const voicePort = 9400 + Math.floor(Math.random() * 90)
+  const voiceProxy = spawn(process.execPath, ['server/voiceProxy.mjs'], {
+    env: {
+      ...process.env,
+      VOICE_PROXY_PORT: String(voicePort),
+      ELEVENLABS_API_KEY: FAKE_XI_KEY,
+      ELEVENLABS_API_BASE: `http://127.0.0.1:${(fakeEleven.address() as AddressInfo).port}`,
+    },
+    stdio: 'ignore',
+  })
+  const vBase = `http://localhost:${voicePort}/api/voice`
+  try {
+    let vHealth: { stt?: boolean } | null = null
+    for (let i = 0; i < 50 && !vHealth; i++) {
+      await new Promise(r => setTimeout(r, 100))
+      try { vHealth = await (await fetch(`${vBase}/health`)).json() } catch { /* not up yet */ }
+    }
+    ok(vHealth?.stt === true, 'with an ElevenLabs key, the voice proxy offers speech-to-text')
+    const recording = Buffer.concat([Buffer.from('FAKEAUDIO'), Buffer.alloc(4000, 1)])
+    const heard = await fetch(`${vBase}/stt`, { method: 'POST', headers: { 'content-type': 'audio/webm;codecs=opus' }, body: recording as unknown as BodyInit })
+    const heardText = await heard.text()
+    const sent = sttSeen.at(-1)
+    ok(heard.ok && (JSON.parse(heardText) as { text?: string }).text === 'Why was that email suspicious?', 'a recording comes back as the words spoken, not a canned question')
+    ok(
+      sent?.key === FAKE_XI_KEY && /name="model_id"\r\n\r\nscribe_v2/.test(sent.body) && sent.body.includes('FAKEAUDIO'),
+      'the proxy sends the audio to Scribe with the key, server-side',
+    )
+    ok(!heardText.includes(FAKE_XI_KEY), 'the key never reaches the browser')
+    const empty = await fetch(`${vBase}/stt`, { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: Buffer.alloc(10) as unknown as BodyInit })
+    ok(empty.status === 400, 'an empty recording is refused rather than transcribed')
+  } finally {
+    voiceProxy.kill()
+    fakeEleven.close()
+  }
 }
 
 section('MEDIA SERVER · STORAGE + HONEST CONFIG')
@@ -1252,7 +1307,16 @@ try {
 
   const clip = await gRead(await gPost('video', { episodeId: 'gen-test', sceneId: 'g_d1', showId: 'rick-and-morty', prompt: 'They argue.', imageKey: still.storageKey }))
   const wan = replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).at(-1)?.body?.input ?? {}
-  ok(clip.httpStatus === 202 && wan.image === `data:image/png;base64,${Buffer.from('FAKEPNG').toString('base64')}`, 'Replicate animates the Gemini still (PNG) into the clip')
+  const fsSync = await import('node:fs')
+  const staleClip = path.join(geminiRoot, 'company/episodes/gen-test/rick-and-morty/videos/g_d1.mp4')
+  fsSync.mkdirSync(path.dirname(staleClip), { recursive: true })
+  fsSync.writeFileSync(staleClip, 'OLDCLIP')
+  const redrawn = await gRead(await gPost('image', { episodeId: 'gen-test', sceneId: 'g_d1', showId: 'rick-and-morty', prompt: 'Two characters at a desk.', references: ['rick', 'morty'], force: true }))
+  ok(
+    redrawn.httpStatus === 200 && !redrawn.reused && !fsSync.existsSync(staleClip),
+    'redrawing a still removes the clip animated from the old one, so a stale clip is never reused',
+  )
+  ok(clip.httpStatus === 202 && wan.image ===`data:image/png;base64,${Buffer.from('FAKEPNG').toString('base64')}`, 'Replicate animates the Gemini still (PNG) into the clip')
   ok(gSeen.every(b => !b.includes(FAKE_GEMINI_KEY) && !b.includes(FAKE_TOKEN)), 'neither key appears in any response the browser can see')
 } finally {
   geminiMedia.kill()

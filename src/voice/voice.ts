@@ -353,7 +353,9 @@ export async function startMic(hint?: string[]): Promise<MicSession> {
   let finalText = ''
   let rec: SpeechRecInstance | undefined
 
-  if (tier === 'browser' && SpeechRec) {
+  // Browser recognition runs in every tier that has it: it is the live transcript
+  // while speaking, and the fallback if a Scribe upload fails.
+  if (SpeechRec) {
     rec = new SpeechRec()
     rec.lang = 'en-US'
     rec.continuous = true
@@ -373,6 +375,23 @@ export async function startMic(hint?: string[]): Promise<MicSession> {
       rec.start()
     } catch {
       rec = undefined
+    }
+  }
+
+  /* With ElevenLabs behind the proxy, the recording itself is what gets
+   * transcribed (Scribe, through /api/voice/stt — the key never leaves the proxy). */
+  let recorder: MediaRecorder | undefined
+  const chunks: Blob[] = []
+  if (tier === 'elevenlabs' && stream && typeof MediaRecorder !== 'undefined') {
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((t) => MediaRecorder.isTypeSupported?.(t))
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      recorder.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data)
+      }
+      recorder.start()
+    } catch {
+      recorder = undefined
     }
   }
 
@@ -400,20 +419,38 @@ export async function startMic(hint?: string[]): Promise<MicSession> {
     void ctx?.close()
   }
 
+  /** The whole recording, once the recorder has flushed its last chunk. */
+  const finishRecording = () =>
+    new Promise<Blob | null>((resolve) => {
+      const done = () => resolve(chunks.length ? new Blob(chunks, { type: recorder?.mimeType || 'audio/webm' }) : null)
+      if (!recorder || recorder.state === 'inactive') return done()
+      recorder.onstop = done
+      recorder.stop()
+    })
+
   return {
-    tier: rec ? 'browser' : tier === 'elevenlabs' ? 'elevenlabs' : 'simulated',
+    tier: recorder ? 'elevenlabs' : rec ? 'browser' : 'simulated',
     level,
     interim: () => interimText,
+    /**
+     * What was actually said, or '' when nothing was understood. Only the
+     * labelled simulated tier — no recognition of any kind — makes one up.
+     */
     async stop() {
-      const recorded = finalText.trim() || interimText.trim()
+      const browserHeard = () => finalText.trim() || interimText.trim()
+      const audio = await finishRecording()
       teardown()
-      if (recorded) return recorded
-      if (tier === 'elevenlabs') {
-        // A real Scribe integration would POST the recorded blob through the
-        // voice proxy here. Blob capture is intentionally not wired up: it
-        // would be untested code on stage.
-        return (hint ?? SIMULATED_UTTERANCES)[0]
+      if (audio && audio.size > 0) {
+        try {
+          const res = await fetch(`${PROXY_BASE}/stt`, { method: 'POST', headers: { 'content-type': audio.type || 'audio/webm' }, body: audio })
+          const body = (await res.json().catch(() => ({}))) as { text?: string }
+          if (res.ok && body.text?.trim()) return body.text.trim()
+        } catch {
+          /* upload failed — fall back to what the browser heard */
+        }
+        return browserHeard()
       }
+      if (rec || tier !== 'simulated') return browserHeard()
       const pool = hint?.length ? hint : SIMULATED_UTTERANCES
       return pool[Math.floor(Math.random() * pool.length)]
     },
