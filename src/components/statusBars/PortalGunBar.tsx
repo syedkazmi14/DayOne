@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import type { StatusBarProps } from './types'
+import { useTrackWidth } from './useTrackWidth'
 
 /* ============================================================================
  * Rick and Morty — the portal gun fires the progress bar.
@@ -45,21 +46,8 @@ const STEM_TO_MUZZLE = 0.72
 /** Tuck the beam under the gun so there is never a seam at the barrel. */
 const TUCK = 4
 
-/** Used for the first paint only, before the real width is measured. */
-const FALLBACK_W = 360
-
 export function PortalGunBar({ progress, compact }: StatusBarProps) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [boxW, setBoxW] = useState(FALLBACK_W)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    if (el.clientWidth > 0) setBoxW(el.clientWidth)
-    if (typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(([entry]) => entry.contentRect.width > 0 && setBoxW(entry.contentRect.width))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  const [ref, boxW] = useTrackWidth<HTMLDivElement>()
 
   const gunH = compact ? 30 : 38
 

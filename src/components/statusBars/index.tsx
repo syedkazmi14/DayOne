@@ -1,5 +1,6 @@
 import type { Episode } from '@/types'
 import { ActRailBar } from './ActRailBar'
+import { ChickenFightBar } from './ChickenFightBar'
 import { PortalGunBar } from './PortalGunBar'
 import { episodeProgress } from './progress'
 import type { StatusBarDesign } from './types'
@@ -12,6 +13,7 @@ import type { StatusBarDesign } from './types'
 
 const DESIGNS: Record<string, StatusBarDesign> = {
   'rick-and-morty': PortalGunBar,
+  'family-guy': ChickenFightBar,
 }
 
 export function statusBarFor(groupId: string | null | undefined): StatusBarDesign {

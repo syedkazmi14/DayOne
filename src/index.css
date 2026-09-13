@@ -212,10 +212,29 @@
       background-position: calc(100% + 90px) 0;
     }
   }
+  /* Family Guy status bar: the chicken is still airborne — a small tilt and
+   * bob. Its real movement is its position, which tracks progress. */
+  .chicken-tumble {
+    transform-origin: 8% 28%;
+    animation: chicken-tumble 1.3s ease-in-out infinite;
+  }
+  @keyframes chicken-tumble {
+    0%,
+    100% {
+      transform: translateY(0) rotate(2deg);
+    }
+    50% {
+      transform: translateY(-1.5px) rotate(5deg);
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
     .portal-beam-sheen {
       animation: none;
       opacity: 0;
+    }
+    .chicken-tumble {
+      animation: none;
+      transform: rotate(3deg);
     }
   }
 }
