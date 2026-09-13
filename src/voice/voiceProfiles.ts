@@ -115,25 +115,25 @@ export const voiceProfiles: Record<string, VoiceProfile> = {
   }),
 
   /* ----------------------------------------------------------- Family Guy */
-  peter: profile('peter', 'Alex — goofy, loud, enthusiastic', 'hYZHGYzFnp1GKImhQtGi', { rate: 1.04, pitch: 0.94 }, {
+  peter: profile('peter', 'Alex — goofy, loud, enthusiastic', '9sqxvbL5XWKGirnd0oc2', { rate: 1.04, pitch: 0.94 }, {
     fallbackVoiceId: 'CwhRBWXzGAHq8TQ4Fs17', // Roger — laid-back, resonant
     casting: 'Confident about things he has not read. Comic energy over precision.',
-    settings: { stability: 0.32, similarity_boost: 0.7, style: 0.55 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
   }),
-  stewie: profile('stewie', 'Blackwood — sinister, posh, British', 'agL69Vji082CshT65Tcy', { rate: 1.02, pitch: 1.2 }, {
+  stewie: profile('stewie', 'Blackwood — sinister, posh, British', 'UPyXIOJBeJGwiye6LsUf', { rate: 1.02, pitch: 1.2 }, {
     fallbackVoiceId: 'onwK4e9ZLuTAKqWW03F9', // Daniel — British, formal
     casting: 'Received Pronunciation delivered as a threat. Pitched up, because the aristocratic menace is the joke.',
-    settings: { stability: 0.5, similarity_boost: 0.8, style: 0.5 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
   }),
-  brian: profile('brian', 'Photi — writerly narrator, smooth', 'DjFOcJJK8rz0EB8LXAL0', { rate: 1.0, pitch: 0.98 }, {
+  brian: profile('brian', 'Photi — writerly narrator, smooth', 'qj8UYN7IXokJ8wzhcnx8', { rate: 1.0, pitch: 0.98 }, {
     fallbackVoiceId: 'cjVigY5qzO86Huf0OWal', // Eric — smooth, trustworthy
     casting: 'A literal voice-over-narrator-and-writer voice, for the one who wrote the policy and wants you to know.',
-    settings: { stability: 0.58, similarity_boost: 0.8, style: 0.28 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
   }),
-  lois: profile('lois', 'Lena — warm, honest, end of a long day', 'roYauZ4bOLAKvVZTPLre', { rate: 1.0, pitch: 1.06 }, {
+  lois: profile('lois', 'Lena — warm, honest, end of a long day', 'aarzqdYVntnMtUCc4aMk', { rate: 1.0, pitch: 1.06 }, {
     fallbackVoiceId: 'hpp4J3VqNfWAUOO0d1Us', // Bella — bright, professional
     casting: 'Runs the household and the escalation queue, and is tired of both.',
-    settings: { stability: 0.52, similarity_boost: 0.8, style: 0.3 },
+    settings: { stability: 0.5, similarity_boost: 0.75, style: 0 }, // matches this voice's stored ElevenLabs defaults
   }),
 
   /* -------------------------------------------------------- The Simpsons */
