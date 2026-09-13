@@ -84,6 +84,7 @@ export const shopItems: ShopItem[] = [
     type: 'badge',
     price: 250,
     description: 'A pocket-sized hole in reality.',
+    image: '/collectibles/badges/portal.png',
   },
   {
     id: 'plumbus-badge',
@@ -91,6 +92,7 @@ export const shopItems: ShopItem[] = [
     type: 'badge',
     price: 250,
     description: 'Rubbed with fleeb juice. Allegedly.',
+    image: '/collectibles/badges/plumbus.png',
   },
   {
     id: 'chicken-badge',
@@ -99,13 +101,24 @@ export const shopItems: ShopItem[] = [
     price: 300,
     description: 'He will be back.',
     featured: true,
+    image: '/collectibles/badges/chicken.png',
   },
   {
-    id: 'certified-menace',
-    name: 'Certified Menace',
+    id: 'cheesy-poofs',
+    name: 'Cheesy Poofs',
     type: 'badge',
-    price: 350,
-    description: 'Signed off by nobody in particular.',
+    price: 300,
+    description: 'Rebranded snack. Same orange fingers.',
+    image: '/collectibles/badges/CheesyPoofs.webp',
+  },
+  {
+    id: 'pink-donut',
+    name: "Homer's Donut",
+    type: 'badge',
+    price: 300,
+    description: 'Pink frosting, rainbow sprinkles, zero nutritional value.',
+    isNew: true,
+    image: '/collectibles/badges/donut.png',
   },
 
   /* ----------------------------------------------------------- characters */
@@ -117,6 +130,7 @@ export const shopItems: ShopItem[] = [
     show: 'rick-and-morty',
     description: 'Ooh-wee. Always turns up for the finale.',
     featured: true,
+    image: '/collectibles/Mr_poopy_butthole.jpg',
   },
   {
     id: 'mr-meeseeks',
@@ -125,6 +139,7 @@ export const shopItems: ShopItem[] = [
     price: 650,
     show: 'rick-and-morty',
     description: 'Existence is pain. Onboarding is worse.',
+    image: '/collectibles/Mr_Meeseeks.jpg',
   },
   {
     id: 'birdperson',
@@ -133,6 +148,7 @@ export const shopItems: ShopItem[] = [
     price: 750,
     show: 'rick-and-morty',
     description: 'It has been a challenging onboarding.',
+    image: '/collectibles/Birdperson.jpg',
   },
   {
     id: 'consuela',
@@ -141,6 +157,7 @@ export const shopItems: ShopItem[] = [
     price: 600,
     show: 'family-guy',
     description: 'No, no, no. Not in the shared drive.',
+    image: '/collectibles/Consuela.jpg',
   },
   {
     id: 'ernie-the-giant-chicken',
@@ -149,6 +166,7 @@ export const shopItems: ShopItem[] = [
     price: 800,
     show: 'family-guy',
     description: 'Still upset about one expired coupon.',
+    image: '/collectibles/Ernie_the_Giant_Chicken.jpg',
   },
   {
     id: 'death',
@@ -157,6 +175,7 @@ export const shopItems: ShopItem[] = [
     price: 850,
     show: 'family-guy',
     description: 'Out on sick leave, somehow.',
+    image: '/collectibles/Death.jpg',
   },
   {
     id: 'towelie',
@@ -166,14 +185,26 @@ export const shopItems: ShopItem[] = [
     show: 'south-park',
     description: 'Do not forget to bring a towel.',
     isNew: true,
+    image: '/collectibles/sp_towelie.jpg',
   },
   {
-    id: 'hans-moleman',
-    name: 'Hans Moleman',
+    id: 'sideshow-bob',
+    name: 'Sideshow Bob',
     type: 'character',
     price: 700,
     show: 'the-simpsons',
     description: 'Has survived every incident on record.',
+    image: '/collectibles/Sideshowbob.jpg',
+  },
+  {
+    id: 'krusty-the-clown',
+    name: 'Krusty the Clown',
+    type: 'character',
+    price: 650,
+    show: 'the-simpsons',
+    description: 'Contractually obligated to be here.',
+    isNew: true,
+    image: '/collectibles/Krustytheclown.jpg',
   },
 ]
 
