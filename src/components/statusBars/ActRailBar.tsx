@@ -1,15 +1,7 @@
-import type { Episode } from '@/types'
+import type { StatusBarProps } from './types'
 
-/** ●───○───○───○ — act-level progress, always visible, never a percentage. */
-export function EpisodeProgress({
-  episode,
-  currentAct,
-  compact = false,
-}: {
-  episode: Episode
-  currentAct: number
-  compact?: boolean
-}) {
+/** ●───○───○───○ — the default design: act-level dots with their labels. */
+export function ActRailBar({ episode, currentAct, compact }: StatusBarProps) {
   return (
     <div className="flex items-center gap-2">
       {episode.beats.map((b, i) => {

@@ -71,8 +71,7 @@ export function Results() {
       <div className="relative mx-auto max-w-4xl px-6 pb-24 pt-[14vh] sm:px-10">
         {/* headline */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}>
-          <Eyebrow className="mb-3">episode complete</Eyebrow>
-          <h1 className="t-display text-[clamp(2.6rem,8vw,5.2rem)] text-bone">{episode?.title}</h1>
+          <h1 className="font-sans text-[32px] font-semibold leading-tight tracking-[-0.01em] text-bone sm:text-[36px]">Results</h1>
 
           <dl className="mt-10 flex flex-wrap items-end gap-x-10 gap-y-6">
             <div className="mr-2">

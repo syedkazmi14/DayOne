@@ -10,7 +10,7 @@ import { CharacterChat } from '../CharacterChat'
 import { ChoicePanel } from '../ChoicePanel'
 import { ConsequencePanel } from '../ConsequencePanel'
 import { DialogueOverlay } from '../DialogueOverlay'
-import { EpisodeProgress } from '../EpisodeProgress'
+import { EpisodeStatusBar } from '../statusBars'
 import { RiskTerminal } from '../RiskTerminal'
 import { SceneCanvas } from '../SceneCanvas'
 import { Btn, Eyebrow } from '../ui/Bits'
@@ -87,8 +87,8 @@ export function ScenePlayer() {
       </AnimatePresence>
 
       {/* HUD */}
-      <div className="absolute inset-x-0 top-0 z-[31] flex items-start justify-between px-6 pt-[calc(4.5vh+14px)] sm:px-10">
-        <div>
+      <div className="absolute inset-x-0 top-0 z-[31] flex items-start justify-between gap-6 px-6 pt-[calc(4.5vh+14px)] sm:gap-12 sm:px-10">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-3">
             <span className="font-mono text-[10px] uppercase tracking-ultra text-bone-dim">{episode.code}</span>
             <span className="h-px w-5 bg-bone/25" />
@@ -96,10 +96,10 @@ export function ScenePlayer() {
           </div>
           <div className="mt-2.5">
             <div className="hidden sm:block">
-              <EpisodeProgress episode={episode} currentAct={scene.act} />
+              <EpisodeStatusBar episode={episode} currentAct={scene.act} />
             </div>
             <div className="sm:hidden">
-              <EpisodeProgress episode={episode} currentAct={scene.act} compact />
+              <EpisodeStatusBar episode={episode} currentAct={scene.act} compact />
             </div>
           </div>
           <AssetTierBadge assets={scene.assets} className="mt-2.5" />

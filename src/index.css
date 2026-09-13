@@ -195,6 +195,29 @@
   .rail {
     background: rgba(237, 233, 226, 0.12);
   }
+
+  /* Portal-gun status bar: a soft band of light travelling down the beam so it
+   * reads as still firing. Light only — the beam itself is the supplied PNG. */
+  .portal-beam-sheen {
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 230, 0.55) 50%, transparent 100%) no-repeat;
+    background-size: 90px 100%;
+    mix-blend-mode: soft-light;
+    animation: portal-beam 1.6s linear infinite;
+  }
+  @keyframes portal-beam {
+    from {
+      background-position: -90px 0;
+    }
+    to {
+      background-position: calc(100% + 90px) 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .portal-beam-sheen {
+      animation: none;
+      opacity: 0;
+    }
+  }
 }
 
 @layer utilities {
