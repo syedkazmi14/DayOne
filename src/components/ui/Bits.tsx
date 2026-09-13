@@ -89,8 +89,8 @@ export function Meter({
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <span className="t-label text-bone-dim">{label}</span>
-        <span className="flex items-baseline gap-2 font-mono text-[13px] tabular-nums" style={{ color: accent }}>
+        <span className="font-sans text-[13.5px] text-bone">{label}</span>
+        <span className="flex items-baseline gap-2 font-sans text-[13.5px] font-medium tabular-nums text-bone">
           {delta !== undefined && Math.abs(delta) > 0.005 && (
             <span className={`text-[10px] ${delta > 0 ? 'text-good' : 'text-danger'}`}>
               {delta > 0 ? '▲' : '▼'}
@@ -103,13 +103,13 @@ export function Meter({
       <div className="relative h-[3px] w-full rail overflow-hidden rounded">
         <motion.div
           className="absolute inset-y-0 left-0 rounded"
-          style={{ background: accent, boxShadow: `0 0 12px ${accent}66` }}
+          style={{ background: accent }}
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
         />
       </div>
-      {sub && <div className="mt-1 font-mono text-[10px] text-bone-faint">{sub}</div>}
+      {sub && <div className="mt-1 font-sans text-[12px] text-bone-faint">{sub}</div>}
     </div>
   )
 }

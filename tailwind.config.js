@@ -25,6 +25,8 @@ export default {
       },
       fontFamily: {
         sans: ['DM Sans', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        // Only the wager cards use it — a playing-card face, not a UI font.
+        card: ['Playfair Display', 'Georgia', 'Times New Roman', 'serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       letterSpacing: { ultra: '0.15em', mega: '0.24em' },

@@ -1,5 +1,4 @@
 import { motion } from 'framer-motion'
-import { ArrowRight, BrainCircuit, Check, Coins, Minus, Play, User, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { generateCoachAnalysis, type CoachAnalysis } from '@/ai/coach'
 import { llmLabel } from '@/ai/llm'
@@ -9,13 +8,22 @@ import { concepts, conceptLabel } from '@/content/knowledge'
 import { useGame } from '@/engine/gameStore'
 import { growth } from '@/engine/adaptive'
 import { SceneCanvas } from '../SceneCanvas'
-import { Btn, Chip, Eyebrow, Meter, Rule } from '../ui/Bits'
+import { Btn, Eyebrow, Meter } from '../ui/Bits'
 
-const MARK = {
-  best: { Icon: Check, color: '#54D1A0' },
-  acceptable: { Icon: Minus, color: '#F5A524' },
-  poor: { Icon: X, color: '#FF4D4D' },
-} as const
+/* Structure comes from type and spacing: one label per section, no accent
+ * rules, icons or tinted panels. Colour is kept for meaning only — a gain or a
+ * loss, and the concepts the next episode will target. */
+
+const QUALITY_WORD = { best: 'Strong', acceptable: 'Partial', poor: 'Costly' } as const
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div>
+      <dt className="font-sans text-[12.5px] text-bone-faint">{label}</dt>
+      <dd className="mt-1 font-sans text-[22px] font-medium leading-none tabular-nums text-bone">{value}</dd>
+    </div>
+  )
+}
 
 export function Results() {
   const { state, dispatch, episode } = useGame()
@@ -46,6 +54,7 @@ export function Results() {
 
   const deltas = state.masteryAtStart ? growth(state.masteryAtStart, state.player.mastery) : []
   const deltaFor = (id: string) => deltas.find((d) => d.concept === id)
+  const count = (q: keyof typeof QUALITY_WORD) => decisions.filter((d) => d.quality === q).length
 
   return (
     <div className="relative h-full overflow-y-auto">
@@ -61,170 +70,124 @@ export function Results() {
 
       <div className="relative mx-auto max-w-4xl px-6 pb-24 pt-[14vh] sm:px-10">
         {/* headline */}
-        <motion.div initial={{ opacity: 0, y: 26 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}>
-          <div className="mb-4 flex items-center gap-3">
-            <span className="h-px w-10 bg-signal" />
-            <Eyebrow className="text-signal">episode complete</Eyebrow>
-          </div>
-          <h1 className="t-display text-[clamp(2.8rem,9vw,6rem)] text-bone">{episode?.title}</h1>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}>
+          <Eyebrow className="mb-3">episode complete</Eyebrow>
+          <h1 className="t-display text-[clamp(2.6rem,8vw,5.2rem)] text-bone">{episode?.title}</h1>
 
-          <div className="mt-8 flex flex-wrap items-end gap-x-12 gap-y-6">
-            <div>
-              <Eyebrow className="mb-1">final score</Eyebrow>
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.3, duration: 0.7 }}
-                className="font-sans text-[68px] font-black leading-none tabular-nums text-signal"
-              >
-                {score}
-              </motion.div>
+          <dl className="mt-10 flex flex-wrap items-end gap-x-10 gap-y-6">
+            <div className="mr-2">
+              <dt className="font-sans text-[12.5px] text-bone-faint">Final score</dt>
+              <dd className="mt-1 font-sans text-[56px] font-semibold leading-none tabular-nums text-bone">{score}</dd>
             </div>
-            <div className="space-y-1.5">
-              <Eyebrow>run summary</Eyebrow>
-              <div className="flex flex-wrap gap-2">
-                <Chip tone="good">{decisions.filter((d) => d.quality === 'best').length} strong</Chip>
-                <Chip tone="signal">{decisions.filter((d) => d.quality === 'acceptable').length} partial</Chip>
-                <Chip tone="danger">{decisions.filter((d) => d.quality === 'poor').length} costly</Chip>
-                <Chip tone="cyan">
-                  {state.questionsAsked} question{state.questionsAsked === 1 ? '' : 's'} asked
-                </Chip>
-                {state.creditsDelta !== 0 && (
-                  <Chip tone={state.creditsDelta > 0 ? 'good' : 'danger'}>
-                    <Coins size={10} />
-                    {state.creditsDelta > 0 ? '+' : ''}
-                    {state.creditsDelta} cr
-                  </Chip>
-                )}
-              </div>
-            </div>
-          </div>
+            <Stat label="Strong" value={count('best')} />
+            <Stat label="Partial" value={count('acceptable')} />
+            <Stat label="Costly" value={count('poor')} />
+            <Stat label="Questions asked" value={state.questionsAsked} />
+            {state.creditsDelta !== 0 && (
+              <Stat label="Credits" value={`${state.creditsDelta > 0 ? '+' : '−'}${Math.abs(state.creditsDelta).toLocaleString()}`} />
+            )}
+          </dl>
         </motion.div>
 
         {/* ledger */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35, duration: 0.7 }} className="mt-12">
-          <Eyebrow className="mb-4">your decisions</Eyebrow>
-          <div className="space-y-px">
-            {decisions.map((d, i) => {
-              const { Icon, color } = MARK[d.quality]
-              return (
-                <motion.div
-                  key={d.sceneId + i}
-                  initial={{ opacity: 0, x: -14 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.5 + i * 0.09 }}
-                  className="flex items-center gap-4 border-b border-bone/8 py-3.5"
+        <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25, duration: 0.6 }} className="mt-16">
+          <Eyebrow className="mb-3">your decisions</Eyebrow>
+          <div className="border-t border-bone/10">
+            {decisions.map((d, i) => (
+              <div key={d.sceneId + i} className="grid grid-cols-[1fr_auto_3rem] items-baseline gap-x-4 border-b border-bone/10 py-3.5">
+                <div className="min-w-0">
+                  <div className="font-sans text-[15px] text-bone">{d.ledgerLabel}</div>
+                  <div className="mt-0.5 font-sans text-[12.5px] text-bone-faint">{d.concepts.map((c) => conceptLabel(c)).join(', ')}</div>
+                </div>
+                <span className="font-sans text-[13px] text-bone-dim">{QUALITY_WORD[d.quality]}</span>
+                <span
+                  className={`text-right font-sans text-[14px] font-medium tabular-nums ${
+                    d.scoreImpact > 0 ? 'text-good' : d.scoreImpact < 0 ? 'text-danger' : 'text-bone-dim'
+                  }`}
                 >
-                  <Icon size={15} style={{ color }} className="shrink-0" />
-                  <span className="min-w-0 flex-1 font-sans text-[14.5px] font-light text-bone">{d.ledgerLabel}</span>
-                  <span className="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-bone-faint sm:inline">
-                    {d.concepts.map((c) => conceptLabel(c)).join(' · ')}
-                  </span>
-                  <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums" style={{ color }}>
-                    {d.scoreImpact > 0 ? '+' : ''}
-                    {d.scoreImpact}
-                  </span>
-                </motion.div>
-              )
-            })}
+                  {d.scoreImpact > 0 ? '+' : d.scoreImpact < 0 ? '−' : ''}
+                  {Math.abs(d.scoreImpact)}
+                </span>
+              </div>
+            ))}
           </div>
-        </motion.div>
+        </motion.section>
 
         {/* coach */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6, duration: 0.7 }} className="glass mt-12 p-6 sm:p-8">
-          <div className="mb-5 flex flex-wrap items-center gap-3">
-            <BrainCircuit size={15} className="text-cyan" />
-            <Eyebrow className="text-cyan">ai coach analysis</Eyebrow>
-            <span className="ml-auto font-mono text-[9px] uppercase tracking-[0.14em] text-bone-faint">
-              {coach ? (coach.source === 'llm' ? llmLabel() : 'deterministic · no model configured') : 'analysing…'}
+        <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4, duration: 0.6 }} className="mt-16">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <Eyebrow>coach summary</Eyebrow>
+            <span className="font-sans text-[12px] text-bone-faint">
+              {coach ? (coach.source === 'llm' ? llmLabel() : 'Written from your decision log, no model') : ''}
             </span>
           </div>
 
           {!coach ? (
-            <div className="space-y-3">
-              {[0, 1, 2].map((i) => (
-                <motion.div
-                  key={i}
-                  className="h-3 rounded rail"
-                  style={{ width: `${88 - i * 14}%` }}
-                  animate={{ opacity: [0.25, 0.6, 0.25] }}
-                  transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.18 }}
-                />
-              ))}
-            </div>
+            <p className="font-sans text-[15px] text-bone-faint">Reading your run…</p>
           ) : (
-            <>
-              <h3 className="t-display mb-5 text-2xl text-bone sm:text-3xl">{coach.headline}</h3>
-              <div className="space-y-4">
-                {coach.paragraphs.map((p, i) => (
-                  <motion.p
-                    key={i}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.12, duration: 0.5 }}
-                    className="font-sans text-[14.5px] font-light leading-[1.72] text-bone-dim"
-                  >
+            <div className="max-w-2xl">
+              <h2 className="font-sans text-[24px] font-semibold leading-snug tracking-[-0.01em] text-bone sm:text-[26px]">
+                {coach.headline}
+              </h2>
+              <ul className="mt-3 space-y-1.5">
+                {coach.points.map((p) => (
+                  <li key={p} className="font-sans text-[15px] leading-relaxed text-bone-dim">
                     {p}
-                  </motion.p>
+                  </li>
                 ))}
-              </div>
-              <div className="mt-6 border-l-2 border-cyan/40 pl-4">
-                <Eyebrow className="mb-1.5 text-cyan">what changes next</Eyebrow>
-                <p className="font-sans text-[14px] font-light leading-relaxed text-bone">{coach.nextEpisodePlan}</p>
-              </div>
-            </>
+              </ul>
+              <p className="mt-4 font-sans text-[15px] text-bone">{coach.nextEpisodePlan}</p>
+            </div>
           )}
-        </motion.div>
+        </motion.section>
 
         {coach && <RunTelemetryPanel telemetry={coach.telemetry} />}
 
         {/* mastery movement */}
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }} className="mt-12">
+        <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.55 }} className="mt-16">
           <Eyebrow className="mb-5">what the system learned about you</Eyebrow>
           <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
             {concepts.map((c) => {
               const d = deltaFor(c.id)
+              const m = state.player.mastery[c.id]
+              const focus = !!coach?.nextFocus.includes(c.id)
               return (
                 <Meter
                   key={c.id}
                   label={c.label}
-                  value={state.player.mastery[c.id].score}
+                  value={m.score}
                   delta={d ? d.after - d.before : undefined}
-                  accent={coach?.nextFocus.includes(c.id) ? '#6FD3D8' : '#F5A524'}
-                  sub={state.player.mastery[c.id].attempts === 0 ? 'not yet tested' : `${state.player.mastery[c.id].attempts} observations`}
+                  accent={focus ? '#F5A524' : '#A8A399'}
+                  sub={[m.attempts === 0 ? 'not yet tested' : `${m.attempts} observations`, focus ? 'next focus' : ''].filter(Boolean).join(' · ')}
                 />
               )
             })}
           </div>
-        </motion.div>
+        </motion.section>
 
-        <Rule label="next" />
-
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          {next && (
-            <Btn onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: next.entry.episode.id })}>
-              <Play size={13} fill="currentColor" />
-              play recommended episode
+        {/* next */}
+        <section className="mt-16">
+          <div className="flex flex-wrap items-center gap-3">
+            {next && (
+              <Btn onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: next.entry.episode.id })}>play recommended episode</Btn>
+            )}
+            <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
+              episodes
             </Btn>
+            <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'profile' })}>
+              Employee profile
+            </Btn>
+          </div>
+          {coach && (
+            <p className="mt-3 font-sans text-[13px] text-bone-faint">
+              {next
+                ? `Recommended: ${next.entry.episode.title}${
+                    next.covers.length ? `, covers ${next.covers.map((c) => conceptLabel(c).toLowerCase()).join(' and ')}` : ''
+                  }.`
+                : `Nothing in your library targets ${coach.nextFocus.map((c) => conceptLabel(c).toLowerCase()).join(' and ')} yet. Your admin can build it in the Studio.`}
+            </p>
           )}
-          <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
-            episodes <ArrowRight size={13} />
-          </Btn>
-          <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'profile' })}>
-            <User size={13} /> Employee profile
-          </Btn>
-        </div>
-        {coach && (
-          <p className="mt-3 font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
-            {next
-              ? `recommended for you · ${next.entry.episode.title} · ${
-                  next.covers.length
-                    ? `covers ${next.covers.map((c) => conceptLabel(c).toLowerCase()).join(' + ')}`
-                    : 'next in your library'
-                }`
-              : `nothing in your library targets ${coach.nextFocus.map((c) => conceptLabel(c).toLowerCase()).join(' + ')} yet — your admin can build it in the Studio`}
-          </p>
-        )}
+        </section>
       </div>
     </div>
   )

@@ -266,9 +266,11 @@ for (const [name, run] of [['perfect', perfect], ['worst', worst]] as const) {
   for (const d of run) after = applyDecision(after, scenes[d.sceneId].choices!.find(c => c.quality === d.quality)!)
   const c = await generateCoachAnalysis({ decisions: run, before: baselineMastery(), after, questionsAsked: name === 'perfect' ? 4 : 0, score: episodeScore(run) })
   console.log(`\n  [${name}] ${c.headline}  (source: ${c.source}, focus: ${c.nextFocus.join(',')})`)
-  c.paragraphs.forEach(p => console.log('   · ' + p.slice(0, 150) + (p.length > 150 ? '…' : '')))
-  ok(c.paragraphs.length >= 3, `${name}: coach should produce 3+ paragraphs`)
-  ok(!c.paragraphs.some(p => /undefined|NaN/.test(p)), `${name}: malformed coach text`)
+  c.points.forEach(p => console.log('   · ' + p))
+  ok(c.points.length >= 1 && c.points.length <= 3, `${name}: coach summary should be 1-3 points (got ${c.points.length})`)
+  ok(c.points.every(p => p.split(/\s+/).length <= 22), `${name}: every coach point should be one short sentence`)
+  ok(c.nextEpisodePlan.split(/\s+/).length <= 14, `${name}: next-episode plan should be one short sentence`)
+  ok(!c.points.some(p => /undefined|NaN/.test(p)), `${name}: malformed coach text`)
   ok(c.nextFocus.length > 0, `${name}: no next focus`)
 }
 
@@ -281,8 +283,8 @@ const mixed: DecisionRecord[] = [
 ]
 const mc = await generateCoachAnalysis({ decisions: mixed, before: baselineMastery(), after: baselineMastery(), questionsAsked: 3, score: episodeScore(mixed) })
 console.log(`\n  [mixed] ${mc.headline}`)
-mc.paragraphs.forEach(p => console.log('   · ' + p.slice(0, 160) + (p.length > 160 ? '…' : '')))
-ok(mc.paragraphs.some(p => /faster|speed|quickest/i.test(p)), 'mixed run should detect the speed signal')
+mc.points.forEach(p => console.log('   · ' + p))
+ok(mc.points.some(p => /faster|speed|quickest/i.test(p)), 'mixed run should detect the speed signal')
 
 /* ------------------------------------------------ ingest: validation rules */
 section('INGEST · KNOWLEDGE VALIDATION')
@@ -704,10 +706,10 @@ const untagged = analyseRun([rec('best', undefined, 1), rec('poor', undefined, 1
 ok(untagged.weakness === null && describeTelemetry(untagged).length === 0, 'untagged runs claim no pattern')
 
 const tc = await generateCoachAnalysis({ decisions: trusting, before: baselineMastery(), after: baselineMastery(), questionsAsked: 1, score: 50 })
-ok(tc.paragraphs[0].startsWith('You correctly identified 100% of external threats'), 'the coach leads with measured telemetry')
-ok(tc.paragraphs[0].includes('trusting requests that appear to come from people you already know'), 'the coach names the biggest weakness')
+ok(tc.points[0].startsWith('You correctly identified 100% of external threats'), 'the coach leads with measured telemetry')
+ok(tc.telemetry.weakness?.id === 'trusts_known_people', 'the run surfaces the biggest weakness')
 ok(tc.headline === 'You catch attackers. You do not catch colleagues.', `coach headline: ${tc.headline}`)
-console.log(`  [telemetry] ${tc.paragraphs[0]}`)
+console.log(`  [telemetry] ${tc.points[0]}`)
 
 /* ------------------------------------------------ grounding trace */
 section('GROUNDING TRACE')

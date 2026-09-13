@@ -1,6 +1,6 @@
 import { conceptLabel } from '@/content/knowledge'
 import type { ConceptId, DecisionRecord, Mastery } from '@/types'
-import { growth, weakestConcept, strongestConcept } from '@/engine/adaptive'
+import { weakestConcept, strongestConcept } from '@/engine/adaptive'
 import { analyseRun, describeTelemetry, pct, type RunTelemetry, type WeaknessId } from '@/engine/telemetry'
 import { complete, isLive, LLMUnavailable } from './llm'
 
@@ -11,21 +11,26 @@ import { complete, isLive, LLMUnavailable } from './llm'
  * have written themselves. The signal comes from deterministic models (mastery,
  * src/engine/telemetry.ts); the language is the only thing an LLM is asked for.
  *
- * The offline composer is not a generic template. It reports measured patterns:
- * accuracy by threat source, decision speed under authority pressure, wager
- * calibration, speed/accuracy correlation and engagement — and only the ones
- * actually present in the log.
+ * The summary is read at a glance on the results page, so it is deliberately
+ * short: a headline, the measured lead, and the single most useful behavioural
+ * signal (tempo, wager calibration, or engagement) — only ones actually present
+ * in the log. The full measurements sit beside it in RunTelemetryPanel.
  * ========================================================================== */
 
 export interface CoachAnalysis {
   headline: string
-  paragraphs: string[]
+  /** At most three short sentences — the result at a glance, not an essay. */
+  points: string[]
   nextFocus: ConceptId[]
+  /** One short sentence on what the next episode changes. */
   nextEpisodePlan: string
   /** The measurements the narration is built on. Rendered alongside it. */
   telemetry: RunTelemetry
   source: 'llm' | 'local'
 }
+
+/** Hard ceiling on the summary, whichever path wrote it. */
+const MAX_POINTS = 3
 
 /** Concept-level fallback for runs whose scenes carry no threat tags. */
 const OVERT: ConceptId[] = ['phishing', 'social_engineering']
@@ -70,22 +75,14 @@ const WEAKNESS_HEADLINE: Record<WeaknessId, string> = {
   urgency: 'The clock is doing your thinking.',
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+const lower = (c: ConceptId) => conceptLabel(c).toLowerCase()
 
-function localAnalysis(
-  decisions: DecisionRecord[],
-  before: Record<ConceptId, Mastery>,
-  after: Record<ConceptId, Mastery>,
-  questionsAsked: number,
-): CoachAnalysis {
+function localAnalysis(decisions: DecisionRecord[], after: Record<ConceptId, Mastery>, questionsAsked: number): CoachAnalysis {
   const s = analyse(decisions, questionsAsked)
   const t = analyseRun(decisions)
   const weak = weakestConcept(after)
   const strong = strongestConcept(after)
-  const g = growth(before, after)
-  const paragraphs: string[] = []
 
-  /* --- opening read: what kind of employee did the log describe? --- */
   const headline =
     s.poor === 0 && s.best >= 3
       ? 'You slow down when it counts.'
@@ -99,86 +96,22 @@ function localAnalysis(
               ? 'Your speed is the tell.'
               : 'Careful, uneven, and improving.'
 
-  /* --- the measured lead: accuracy by threat source, tempo under authority --- */
-  const lead = [...describeTelemetry(t), t.weakness?.headline].filter(Boolean)
-  if (lead.length) paragraphs.push(lead.join(' '))
+  /* 1 · the measured lead, or where the run was strongest and weakest */
+  const measured = describeTelemetry(t)
+  const lead = measured[0] ?? `Strongest on ${lower(strong)}; most exposed on ${lower(weak)}.`
 
-  const ledger = `${s.best} strong call${s.best === 1 ? '' : 's'}, ${s.acceptable} partial, ${s.poor} costly`
-  paragraphs.push(
-    `${ledger}. Across ${plural(decisions.length, 'decision')} you were at your best on ${conceptLabel(strong).toLowerCase()} and at your most exposed on ${conceptLabel(weak).toLowerCase()}. That gap is not a knowledge gap — it is a situational one, and it repeats.`,
-  )
-
-  /* --- threat-shape bias by concept, only when the scenes carried no tags --- */
-  const tagged = t.bySource.external.total > 0 && t.bySource.internal.total > 0
-  if (!tagged && s.overtScore !== null && s.pressureScore !== null) {
-    if (s.overtScore > s.pressureScore + 0.25) {
-      paragraphs.push(
-        `You recognise a threat when it looks like a threat. A strange email, an unsolicited call — you were ${pct(s.overtScore)} right on those. When the same risk arrives as a colleague under deadline asking for a favour, you were ${pct(s.pressureScore)} right. Attackers know that asymmetry, and so does anyone who has ever been busy.`,
-      )
-    } else if (s.pressureScore > s.overtScore + 0.25) {
-      paragraphs.push(
-        `Unusually, you hold up better under social pressure than against overt attacks — you said no to colleagues but moved too quickly on the messages engineered to look legitimate. Your judgement is sound; your pattern-recognition for forged authority is the part that needs reps.`,
-      )
-    } else {
-      paragraphs.push(
-        `Your performance was consistent across both shapes of risk — messages engineered to deceive you, and people you like asking for something reasonable. Consistency at this stage is more useful than a high score, because it means the next episode can push difficulty rather than repeat basics.`,
-      )
-    }
-  }
-
-  /* --- tempo --- */
-  if (s.fastPoor) {
-    paragraphs.push(
-      `Timing is worth naming. Your wrong answers came in noticeably faster than your right ones — you commit quickest on exactly the decisions you go on to get wrong, which is the signature of recognising a situation as familiar rather than actually reading it. When a request carries a deadline, that is the moment to slow down, not speed up.`,
-    )
-  } else if (s.avgMs > 14000) {
-    paragraphs.push(
-      `You deliberate — averaging ${Math.round(s.avgMs / 1000)} seconds a decision. That is a real strength under this kind of pressure, and the only thing to watch is that hesitation does not become the reason you default to the most helpful-looking option.`,
-    )
-  }
-
-  /* --- wager calibration as a confidence read --- */
+  /* 2 · the single most useful behavioural signal, in priority order */
   const cal = t.calibration
-  if (cal.verdict === 'overconfident') {
-    paragraphs.push(
-      `Your bets say something your answers do not: they implied ${pct(cal.meanConfidence!)} confidence, and you delivered ${pct(cal.hitRate!)}. Confidence and competence came apart in the same moment, which is the most useful thing to know about yourself here.`,
-    )
-  } else if (cal.verdict === 'underconfident') {
-    paragraphs.push(
-      `You under-bet decisions you then got right — ${pct(cal.meanConfidence!)} implied confidence against ${pct(cal.hitRate!)} delivered. You know more than you are willing to price, and that under-confidence has a cost: it is why people defer to whoever sounds most certain in the room.`,
-    )
-  } else if (cal.verdict === 'calibrated' && cal.bets >= 2) {
-    paragraphs.push(
-      `Your bets tracked your performance closely — ${pct(cal.meanConfidence!)} implied, ${pct(cal.hitRate!)} delivered. Calibration is rarer than accuracy, and it is what makes your judgement trustworthy to other people.`,
-    )
-  }
+  const signal = s.fastPoor
+    ? 'Your wrong answers came faster than your right ones.'
+    : cal.verdict === 'overconfident'
+      ? `Your bets implied ${pct(cal.meanConfidence!)} confidence; you delivered ${pct(cal.hitRate!)}.`
+      : cal.verdict === 'underconfident'
+        ? `You bet like ${pct(cal.meanConfidence!)} sure and delivered ${pct(cal.hitRate!)}. Trust your read.`
+        : (measured[1] ??
+          (s.questionsAsked === 0 && s.best < decisions.length ? 'You never asked the cast why an outcome happened.' : null))
 
-  /* --- engagement --- */
-  if (s.questionsAsked >= 3) {
-    paragraphs.push(
-      `You also asked the cast ${s.questionsAsked} questions rather than accepting the outcome — the transcript shows you pushing on the reasoning, not just the rule. That is the behaviour that generalises to situations no training covered.`,
-    )
-  } else if (s.questionsAsked === 0) {
-    paragraphs.push(
-      `You never asked anyone anything. Every consequence today came with somebody standing there willing to explain the mechanism, and you took the outcome at face value. Argue with the cast next time; they are difficult to annoy.`,
-    )
-  }
-
-  /* --- movement --- */
-  if (g.length) {
-    const up = g.filter((x) => x.after > x.before).slice(0, 2)
-    const down = g.filter((x) => x.after < x.before).slice(0, 2)
-    const fmt = (x: (typeof g)[number]) => `${conceptLabel(x.concept)} ${Math.round(x.before * 100)}→${Math.round(x.after * 100)}%`
-    paragraphs.push(
-      [
-        up.length ? `Moved up: ${up.map(fmt).join(', ')}.` : '',
-        down.length ? `Moved down: ${down.map(fmt).join(', ')}.` : '',
-        'Those numbers are what the next episode is built from.',
-      ]
-        .filter(Boolean)
-        .join(' '),
-    )
-  }
+  const points = [lead, signal].filter((p): p is string => !!p)
 
   const focus = [
     weak,
@@ -188,23 +121,29 @@ function localAnalysis(
       .slice(0, 1),
   ]
 
-  const plan = `Your next episode will bias towards ${focus.map((c) => conceptLabel(c).toLowerCase()).join(' and ')}, and the scenarios will be more ambiguous: requests that are partly legitimate, from people with a real reason to ask. ${conceptLabel(strong)} is demonstrated — it moves to spot-checks rather than full scenes.`
-
-  return { headline, paragraphs, nextFocus: focus, nextEpisodePlan: plan, telemetry: t, source: 'local' }
+  return {
+    headline,
+    points,
+    nextFocus: focus,
+    nextEpisodePlan: `Next episode focuses on ${focus.map(lower).join(' and ')}.`,
+    telemetry: t,
+    source: 'local',
+  }
 }
 
 const COACH_SYSTEM = `You are the ONBOARD adaptive learning coach. You analyse an employee's run through an interactive security-onboarding episode and report what their decisions reveal.
 
-Voice: direct, specific, respectful. Like a good manager giving feedback, not an LMS. No praise inflation, no shaming, no bullet points, no emoji.
+Voice: direct, specific, respectful. Like a good manager giving feedback, not an LMS. No praise inflation, no shaming, no emoji.
 
 Hard rules:
 - Only use the data provided. Never invent a decision, number, or moment that is not in it.
-- If "leadSentences" is non-empty, your first paragraph must open with those sentences verbatim — they are measured.
-- If "weakness" is present, name it. It is the single most useful thing the player does not know about themselves.
+- If "leadSentences" is non-empty, your first point must be its first sentence, verbatim — it is measured.
+- If "weakness" is present, name it in the headline, in your own words. It is the single most useful thing the player does not know about themselves. Its headline sentence is already shown on the page — never repeat it in a point.
 - Describe behavioural patterns, not scores. The player can already see their score.
-- 3 short paragraphs maximum. Then one sentence on what the next episode will change.
+- Be brief: the player reads this at a glance. 1 to 3 points, each a single sentence of at most 20 words. No filler, and do not restate the headline.
+- nextEpisodePlan is one sentence of at most 12 words.
 
-Return JSON only: {"headline": string (max 8 words), "paragraphs": string[], "nextEpisodePlan": string}`
+Return JSON only: {"headline": string (max 8 words), "points": string[], "nextEpisodePlan": string}`
 
 export async function generateCoachAnalysis(args: {
   decisions: DecisionRecord[]
@@ -213,7 +152,7 @@ export async function generateCoachAnalysis(args: {
   questionsAsked: number
   score: number
 }): Promise<CoachAnalysis> {
-  const local = localAnalysis(args.decisions, args.before, args.after, args.questionsAsked)
+  const local = localAnalysis(args.decisions, args.after, args.questionsAsked)
   if (!isLive()) return local
 
   const t = local.telemetry
@@ -246,14 +185,15 @@ export async function generateCoachAnalysis(args: {
     const raw = await complete({
       system: COACH_SYSTEM,
       messages: [{ role: 'user', content: JSON.stringify(payload, null, 2) }],
-      maxTokens: 700,
+      maxTokens: 300,
       temperature: 0.65,
     })
     const json = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, '')) as Partial<CoachAnalysis>
-    if (!json.paragraphs?.length) return local
+    const points = json.points?.filter((p) => typeof p === 'string' && p.trim()).slice(0, MAX_POINTS)
+    if (!points?.length) return local
     return {
       headline: json.headline ?? local.headline,
-      paragraphs: json.paragraphs,
+      points,
       nextFocus: local.nextFocus,
       nextEpisodePlan: json.nextEpisodePlan ?? local.nextEpisodePlan,
       telemetry: t,
