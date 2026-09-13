@@ -103,12 +103,15 @@ export interface GameState {
   questionsAsked: number
   finalScore: number | null
   creditsDelta: number
+  /** Whether the admin has pressed the Studio's terminal "Finish setup". */
+  setupDone: boolean
 }
 
 const STORAGE_KEY = 'onboard.player.v1'
 const PUBLISHED_KEY = 'onboard.published.v1'
 const SESSION_KEY = 'onboard.session.v1'
 const GROUP_KEY = 'onboard.group.v1'
+const SETUP_KEY = 'onboard.setup.v1'
 
 function loadSession(): Session | null {
   try {
@@ -167,6 +170,27 @@ const saveGroupId = (id: string) => {
     localStorage.setItem(GROUP_KEY, id)
   } catch {
     /* private mode — the choice lasts for this tab only */
+  }
+}
+
+/**
+ * Whether the admin has pressed "Finish setup" in the Studio. A plain boolean,
+ * so unlike loadSession/loadGroupId there is no untrusted shape to distrust —
+ * anything present just means the flag was set.
+ */
+function loadSetupDone(): boolean {
+  try {
+    return localStorage.getItem(SETUP_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+const saveSetupDone = (v: boolean) => {
+  try {
+    localStorage.setItem(SETUP_KEY, String(v))
+  } catch {
+    /* private mode — the flag lasts for this tab only */
   }
 }
 
@@ -272,6 +296,7 @@ export const initialState = (): GameState => {
   questionsAsked: 0,
   finalScore: null,
   creditsDelta: 0,
+  setupDone: loadSetupDone(),
   }
 }
 
@@ -300,6 +325,7 @@ export type Action =
   | { type: 'BUY_ITEM'; itemId: string }
   | { type: 'EQUIP_ITEM'; itemId: string }
   | { type: 'UNEQUIP_ITEM'; itemId: string }
+  | { type: 'FINISH_SETUP' }
 
 /**
  * The episode as THIS player sees it. Authored episodes first — a generated
@@ -553,7 +579,8 @@ export function reducer(state: GameState, action: Action): GameState {
     case 'PUBLISH_EPISODE': {
       const { episode } = action
       if (!isAdmin(state)) return state
-      if (getAuthoredEpisode(episode.id) || !validateEpisode(episode).ok) return state
+      const vr = validateEpisode(episode)
+      if (getAuthoredEpisode(episode.id) || !vr.ok) return state
       const stamped: Episode = {
         ...episode,
         locked: false,
@@ -593,6 +620,12 @@ export function reducer(state: GameState, action: Action): GameState {
         /* ignore */
       }
       return initialState()
+    }
+
+    case 'FINISH_SETUP': {
+      if (state.setupDone) return state
+      saveSetupDone(true)
+      return { ...state, setupDone: true }
     }
 
     case 'BUY_ITEM':

@@ -82,7 +82,7 @@ export function Home() {
               {featured && (
                 <button
                   onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: featured.episode.id })}
-                  className="inline-flex items-center gap-2.5 rounded bg-signal px-7 py-3.5 font-sans text-[14px] font-medium text-ink-900 transition-colors duration-200 hover:bg-signal-hot"
+                  className="inline-flex items-center gap-2.5 rounded bg-signal px-7 py-3.5 font-sans text-[14px] font-medium text-signal-ink transition-colors duration-200 hover:bg-signal-hot"
                 >
                   <Play size={14} fill="currentColor" />
                   {state.player.completedEpisodes.includes(featured.episode.id) ? 'Replay episode' : 'Start episode'}

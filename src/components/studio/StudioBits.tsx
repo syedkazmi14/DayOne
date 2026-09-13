@@ -1,9 +1,15 @@
+import { motion } from 'framer-motion'
 import { Check } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Eyebrow } from '../ui/Bits'
 
+const EASE = [0.16, 1, 0.3, 1] as const
+
 export type StepState = 'locked' | 'active' | 'done'
 
+/** Only the active step ever renders in the body — StudioRail (below) owns
+ * navigation now, so there is no collapsed row to be, and no reason for a
+ * step to know its neighbours. */
 export function Step({
   n,
   title,
@@ -17,23 +23,33 @@ export function Step({
   state: StepState
   children?: ReactNode
 }) {
+  const badge = (
+    <span
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border font-mono text-[11px] ${
+        state === 'done' ? 'border-good/50 text-good' : state === 'active' ? 'border-signal/60 text-signal' : 'border-bone/15 text-bone-faint'
+      }`}
+    >
+      {state === 'done' ? <Check size={13} /> : String(n).padStart(2, '0')}
+    </span>
+  )
+
   return (
-    <section className={`mt-14 transition-opacity duration-500 ${state === 'locked' ? 'opacity-40' : ''}`}>
+    <motion.section
+      data-step={n}
+      className="scroll-mt-32"
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: EASE }}
+    >
       <div className="flex items-start gap-4">
-        <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border font-mono text-[11px] ${
-            state === 'done' ? 'border-good/50 text-good' : state === 'active' ? 'border-signal/60 text-signal' : 'border-bone/15 text-bone-faint'
-          }`}
-        >
-          {state === 'done' ? <Check size={13} /> : String(n).padStart(2, '0')}
-        </span>
+        {badge}
         <div className="min-w-0 flex-1">
-          <h2 className="t-display text-[clamp(1.35rem,3.4vw,2rem)] text-bone">{title}</h2>
+          <h2 className="t-section">{title}</h2>
           {detail && <p className="mt-1 max-w-2xl font-sans text-[13px] font-light leading-relaxed text-bone-faint">{detail}</p>}
-          {state !== 'locked' && <div className="mt-5">{children}</div>}
+          <div className="mt-5">{children}</div>
         </div>
       </div>
-    </section>
+    </motion.section>
   )
 }
 
@@ -49,67 +65,94 @@ export function StatusCard({
   tone: 'good' | 'neutral'
 }) {
   return (
-    <div className="glass p-5">
-      <Eyebrow className="mb-2">{title}</Eyebrow>
-      <div className={`font-mono text-[12px] uppercase tracking-[0.14em] ${tone === 'good' ? 'text-good' : 'text-signal'}`}>{value}</div>
-      <p className="mt-2.5 font-sans text-[12px] font-light leading-relaxed text-bone-faint [overflow-wrap:anywhere]">{detail}</p>
+    <div className="hairline rounded border border-bone/10 px-3.5 py-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <Eyebrow>{title}</Eyebrow>
+        <span className={`font-mono text-[11px] uppercase tracking-[0.1em] ${tone === 'good' ? 'text-good' : 'text-signal'}`}>{value}</span>
+      </div>
+      <p className="mt-1.5 font-sans text-[12px] font-light leading-relaxed text-bone-faint [overflow-wrap:anywhere]">{detail}</p>
     </div>
   )
 }
 
-const NODES = [
-  { label: 'COMPANY CONTENT', kind: 'io', sub: 'pdf · transcript · handbook' },
-  { label: 'KNOWLEDGE AGENT', kind: 'ai', sub: 'llm · authoring' },
-  { label: 'SCENARIO GENERATOR', kind: 'ai', sub: 'llm · authoring' },
-  { label: 'EPISODE GRAPH', kind: 'data', sub: 'validated json + shot specs' },
-  { label: 'ASSET PIPELINE', kind: 'ai', sub: 'video · image · voice' },
-  { label: 'DETERMINISTIC GAME', kind: 'engine', sub: 'reducer · no llm' },
-] as const
-
-const COLORS: Record<string, string> = {
-  io: 'rgba(237,233,226,.35)',
-  ai: '#6FD3D8',
-  data: '#F5A524',
-  engine: '#54D1A0',
-}
-
-export function Pipeline() {
+/** Step chrome used to live in the flow as a stack of collapsed rows, so by
+ * step 7 the active step sat under six rows and started further down the
+ * page every single time. Pulling navigation into fixed header chrome fixes
+ * that at the cost of the rows themselves — this is the whole nine-step list,
+ * always, so it has to stay a single line. `overflow-x-auto` is the release
+ * valve if a future label is too long to fit rather than a layout that grows
+ * downward again. */
+export function StudioRail({
+  steps,
+  at,
+  onJump,
+}: {
+  steps: { n: number; label: string; state: StepState; summary?: string }[]
+  at: number
+  onJump: (n: number) => void
+}) {
   return (
-    <div className="min-w-[900px]">
-      <div className="flex items-center gap-2">
-        {NODES.map((n, i) => (
-          <div key={n.label} className="flex items-center gap-2">
-            <div
-              className="rounded border px-3 py-2.5 font-mono text-[9.5px] uppercase tracking-[0.16em]"
-              style={{ borderColor: `${COLORS[n.kind]}55`, color: COLORS[n.kind] }}
-            >
-              {n.label}
-              <div className="mt-0.5 text-[7.5px] tracking-[0.12em] text-bone-faint">{n.sub}</div>
-            </div>
-            {i < NODES.length - 1 && <span className="block h-px w-4 bg-bone/20" />}
-          </div>
-        ))}
-      </div>
+    <nav aria-label="Studio steps" className="no-scrollbar flex items-center overflow-x-auto">
+      {steps.map((step, i) => {
+        const { n, label, state, summary } = step
+        const active = n === at
+        const locked = state === 'locked'
+        const done = state === 'done'
+        const ariaLabel = `Step ${n}${done ? ', done' : active ? ', current' : locked ? ', locked' : ''}`
 
-      <div className="mt-3 flex items-start justify-end gap-5">
-        {[
-          { label: 'player choice', sub: 'authored branch', ai: false },
-          { label: 'character chat', sub: 'rag + llm → elevenlabs', ai: true },
-          { label: 'coach → mastery', sub: 'next scenario adapts', ai: true },
-        ].map((b) => (
-          <div key={b.label} className="flex flex-col items-center">
-            <span className={`block h-4 w-px ${b.ai ? 'bg-cyan/40' : 'bg-bone/20'}`} />
-            <div
-              className={`whitespace-nowrap rounded border px-3 py-2 font-mono text-[9px] uppercase tracking-[0.14em] ${
-                b.ai ? 'border-cyan/40 text-cyan' : 'border-bone/20 text-bone-dim'
+        const inner = (
+          <>
+            <span
+              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border font-mono text-[9px] ${
+                done ? 'border-good/50 text-good' : active ? 'border-signal/70 text-signal' : 'border-bone/15 text-bone-faint/50'
               }`}
             >
-              {b.label}
-              <div className="mt-0.5 text-[7.5px] text-bone-faint">{b.sub}</div>
-            </div>
+              {done ? <Check size={10} /> : n}
+            </span>
+            <span
+              className={`whitespace-nowrap font-sans text-[12px] font-medium ${
+                active ? 'text-bone' : done ? 'text-bone-dim' : 'text-bone-faint/40'
+              }`}
+            >
+              {label}
+            </span>
+          </>
+        )
+
+        return (
+          <div key={n} className="flex shrink-0 items-center">
+            {locked ? (
+              // Future steps are shown so the shape of the wizard reads at a
+              // glance, but they are not a list of destinations — a div, not
+              // a disabled button, so no focus ring implies otherwise.
+              <div aria-label={ariaLabel} aria-disabled="true" className="relative flex shrink-0 items-center gap-1.5 rounded px-2.5 py-2">
+                {inner}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onJump(n)}
+                aria-label={ariaLabel}
+                title={done ? summary : undefined}
+                className="relative flex shrink-0 items-center gap-1.5 rounded px-2.5 py-2 transition-colors duration-200 hover:bg-bone/[0.04]"
+              >
+                {inner}
+                {active && (
+                  // A plain underline, deliberately not a shared-layout one:
+                  // App.tsx swaps screens with AnimatePresence mode="wait", and
+                  // a layoutId animation inside the outgoing subtree never
+                  // settles, so leaving the Studio hung on its own exit and the
+                  // next screen never mounted.
+                  <span className="absolute inset-x-2.5 -bottom-px h-px bg-signal" />
+                )}
+              </button>
+            )}
+            {i < steps.length - 1 && (
+              <span className={`h-px w-4 shrink-0 transition-colors duration-300 ${done ? 'bg-bone/25' : 'bg-bone/10'}`} />
+            )}
           </div>
-        ))}
-      </div>
-    </div>
+        )
+      })}
+    </nav>
   )
 }

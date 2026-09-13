@@ -28,6 +28,17 @@ dom.window.localStorage.setItem(
 )
 g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16) as unknown as number
 g.cancelAnimationFrame = (id: number) => clearTimeout(id)
+// framer-motion's shared layout animation (the Studio rail's sliding
+// underline, layoutId="studio-rail-active") measures elements with
+// ResizeObserver and getBoundingClientRect, neither of which jsdom implements
+// meaningfully — every rect comes back zeroed and there is no ResizeObserver
+// at all. Without a stand-in the projection system never resolves, and
+// AnimatePresence (mode="wait") never fires its exit-complete for a screen
+// that used that layout animation, wedging navigation AWAY from the Studio.
+g.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
+dom.window.ResizeObserver = g.ResizeObserver as never
+dom.window.Element.prototype.getBoundingClientRect = () =>
+  ({ x: 0, y: 0, top: 0, left: 0, bottom: 100, right: 100, width: 100, height: 100, toJSON() {} }) as DOMRect
 g.IS_REACT_ACT_ENVIRONMENT = true
 dom.window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as never
 // Speech: resolve instantly so subtitle pacing does not stall the harness.
@@ -60,9 +71,11 @@ const has = (s: string) => body().toLowerCase().includes(s.toLowerCase())
  * — and the suite should drive what a user (or a screen reader) can actually
  * reach, not just what happens to render as a label.
  */
-function findByText(needle: string, tag = 'button'): HTMLElement | null {
+function findByText(needle: string, tag = 'button', opts: { excludeSelector?: string } = {}): HTMLElement | null {
   const n = needle.toLowerCase()
-  const els = [...document.querySelectorAll<HTMLElement>(tag)]
+  const excluded = opts.excludeSelector ? [...document.querySelectorAll<HTMLElement>(opts.excludeSelector)] : []
+  const isExcluded = (e: HTMLElement) => excluded.some((x) => x.contains(e))
+  const els = [...document.querySelectorAll<HTMLElement>(tag)].filter((e) => !isExcluded(e))
   return (
     els.find((e) => (e.textContent ?? '').toLowerCase().trim().includes(n)) ??
     els.find((e) => (e.getAttribute('aria-label') ?? '').toLowerCase().includes(n)) ??
@@ -76,11 +89,19 @@ async function openProfile() {
   return click('profile')
 }
 
-async function click(needle: string, tag = 'button', label = needle) {
-  const el = findByText(needle, tag)
+async function click(needle: string, tag = 'button', label = needle, opts: { excludeSelector?: string } = {}) {
+  const el = findByText(needle, tag, opts)
   if (!el) { fails++; console.log(`  ✗ could not find ${tag} "${label}"`); return false }
   await act(async () => { el.click(); await sleep(80) })
   return true
+}
+/** Reopen a Studio step by its collapsed title — a no-op if it is already the
+ * open step (whose title is an <h2>, not a <button>, so it simply is not
+ * found). Used where auto-advance racing a step's own completion makes it
+ * unpredictable which step is left open. */
+async function openStudioStep(title: string) {
+  const btn = findByText(title, 'button')
+  if (btn) await act(async () => { btn.click(); await sleep(80) })
 }
 /** Poll the rendered app until a condition holds, for async pipelines. */
 async function waitFor(pred: () => boolean, ms = 20000) {
@@ -403,52 +424,154 @@ ok(has('recent decisions'), 'decision history recorded')
 ok(has('questions you asked'), 'chat transcript recorded')
 await click('episodes')
 await flush(200)
-ok(![...document.querySelectorAll('header button')].some((b) => b.textContent?.trim() === 'Studio'), 'employees have no Studio in the nav')
+
+/* The Studio used to be reachable by anyone signed in — `role` only chose a
+ * landing screen and GOTO never checked it. That is the bug this suite exists
+ * to catch: an employee session must see no way in, at the nav layer AND at
+ * the dispatch layer, regardless of how the navigation is attempted. Regression
+ * guard alongside landingAfterSignIn below. */
+ok(!findByText('studio'), 'no Studio button in the nav for an employee session')
+{
+  const gameStore = await import('../src/engine/gameStore')
+  const employeeState = {
+    ...gameStore.initialState(),
+    session: { role: 'employee' as const, provider: 'Company SSO', signedInAt: Date.now() },
+    view: 'home' as const,
+  }
+  const afterGoto = gameStore.reducer(employeeState, { type: 'GOTO', view: 'authoring' })
+  ok(afterGoto === employeeState, 'dispatching GOTO authoring directly is refused for a non-admin session, not just hidden')
+}
+
+/* Exercise the real sign-in path rather than re-seeding localStorage: this
+ * also covers landingAfterSignIn's admin branch, which sends an admin
+ * straight to the Studio — that landing is intended behavior and worth
+ * guarding, the same way the employee-must-repick-a-show landing is guarded
+ * in section 0. */
 await click('account menu')
 await click('sign out')
 await flush(150)
 await click('Company admin?')
 await click('Company SSO')
 await flush(300)
+/* Kept from main: admins have no lobby, so the picker is skipped entirely. */
 ok(!has('Pick your show'), 'admins skip the show picker')
-ok(has('BORING MATERIAL'), 'admins land in the Studio')
-ok(has('published library') && has('Nothing built yet'), 'the library starts empty — employees only have First Day')
-ok(has('Helix Security Handbook'), 'source documents listed')
-ok(has('KNOWLEDGE AGENT') && has('SCENARIO GENERATOR'), 'pipeline diagram')
+ok(has('studio') && has('Episode builder'), 'signing in as an admin lands straight on the Studio')
+
+/* Step 1 now starts empty: an admin's own documents are the point, and the
+ * demo corpus is an explicit button rather than the default state. It is also
+ * the only material that extracts without a language model, which is why the
+ * rest of this section can run offline at all. */
+ok(!has('Helix Security Handbook'), 'the first step starts empty, with no fixture documents pre-loaded')
+/* The rail names every step so the shape of the wizard reads at a glance;
+ * what must not appear is a future step's CONTENT. */
+ok(!has('Pick a topic with enough rules'), "a later step's content is not rendered, only its name in the rail")
+await click('load demo content')
+await flush(150)
+ok(has('Helix Security Handbook'), 'demo corpus loads on request')
 ok(has('run knowledge agent'), 'pipeline can be run')
-ok(has('video generation'), 'video authoring boundary documented')
 
 console.log('\n=== 11b. STUDIO: KNOWLEDGE → EPISODE → ASSETS → PUBLISH → PLAY ===')
 await click('run knowledge agent')
-ok(await waitFor(() => has('14 knowledge items') && has('run knowledge agent')), 'knowledge agent extracted 14 citable rules')
+/* Extraction finishing flips step 1 to 'done', which auto-advances off it, so
+ * the live counter inside step 1 can vanish before this ever polls it. The
+ * per-step summary now lives on the rail as its title, which outlives the
+ * step moving on. */
+ok(
+  await waitFor(() => document.querySelector('[aria-label="Step 1, done"]')?.getAttribute('title') === '14 rules · 5 documents'),
+  'knowledge agent extracted 14 citable rules',
+)
+/* Auto-advance is asserted, not assumed: step 2's topic buttons only exist in
+ * the DOM once the wizard opens that step on its own. */
+ok(await waitFor(() => !!findByText('Workplace safety')), 'auto-advance opened the topic step once extraction finished')
 await click('Workplace safety')
 await click('generate episode')
 ok(await waitFor(() => has('will not invent policy'), 8000), 'a topic the material does not cover is refused, not improvised')
+
+/* Picking a topic that is already selected is not a fresh 'done' transition,
+ * so auto-advance will not fire here — reopen step 2 by its collapsed title,
+ * the same way a person would. */
+await click('Pick a topic')
 await click('Phishing')
+await click('next →')
 await click('generate episode')
 ok(await waitFor(() => has('validated · playable'), 10000), 'generated graph validated and playable')
+
+/* That validated chip lives in step 4, which auto-advance already jumped to —
+ * step 3's own result card (source label, mastery targets) collapsed behind
+ * it in the same transition. Reopen step 3 to check it, exactly as a reviewer
+ * scrolling back up would. */
+await click('Generate the episode')
 ok(has('script · deterministic composer'), 'offline script source labelled honestly')
-ok(has('MADE FOR YOU') && has('adaptive'), 'graph review shows the adaptive act')
 ok(has('mastery targets'), 'mastery targets shown')
+
+/* Forward is 'next →', never the step's title. Reopening step 3 above put the
+ * cursor back, and a step past the cursor is not rendered at all now, so there
+ * is no 'Review the story' row to click until we advance onto it. */
+await click('next →') // back onto step 4
+ok(has('MADE FOR YOU') && has('adaptive'), 'graph review shows the adaptive act')
+
+/* Steps 5-7 (visuals / voices / video) unlock the moment a draft exists and
+ * reach 'done' the moment their OWN assets finish — attaching even the first
+ * asset can flip that, sometimes before the pass over every scene is done, so
+ * whether auto-advance carries the cursor off the step while its own content
+ * is still mid-render is a race, not a guarantee. Wait on the step's progress
+ * dot (always in the DOM, unlike the panel it describes) rather than on text
+ * scoped to whichever step happens to still be open, then reopen the step by
+ * its collapsed title before reading its content — a no-op if it is already
+ * open, exactly how a person would click back to check. */
+const stepDone = (n: number) => !!document.querySelector(`[aria-label="Step ${n}, done"]`)
+
+await click('next →') // step 4 -> step 5
 await click('generate visual assets')
-ok(await waitFor(() => has('re-render visual assets'), 8000), 'visual asset pass completed')
+ok(await waitFor(() => stepDone(5)), 'visual asset pass completed')
+await flush(150)
+await openStudioStep('Generate images')
 ok(has('procedural previs') && !has('ai generated · stored'), 'no video key: every clip is procedural previs, none claims to be AI')
-await click('generate voice')
-ok(await waitFor(() => has('runtime voice'), 8000), 'voice pass reports runtime synthesis without an ElevenLabs key')
+
+await click('next →') // step 5 -> step 6
+/* 'generate voice' is a prefix of the rail's own step-6 label, 'Generate
+ * voices' — a plain text search would hit that nav chip first (it sits
+ * earlier in the DOM, in the header) and silently navigate instead of
+ * running the pass, leaving this step's rows empty forever. Excluding the
+ * rail is what a person clicking the button they can see, not the nav
+ * above it, actually does. */
+await click('generate voice', 'button', 'generate voice', { excludeSelector: 'nav[aria-label="Studio steps"]' })
+ok(await waitFor(() => stepDone(6)), 'voice generation completed')
+await flush(150)
+await openStudioStep('Generate voices')
+ok(has('runtime voice'), 'voice pass reports runtime synthesis without an ElevenLabs key')
+
+await click('next →') // step 6 -> step 7
+ok(has('video generation'), 'video authoring boundary documented')
 await click('generate cinematic video')
-ok(await waitFor(() => has('re-render cinematic video'), 8000), 'cinematic video pass completed')
+ok(await waitFor(() => stepDone(7)), 'cinematic video pass completed')
+await flush(150)
+await openStudioStep('Generate video')
 ok(
   [...document.querySelectorAll('[data-asset-row^="video:"]')].length === 2 &&
     [...document.querySelectorAll('[data-asset-row^="video:"]')].every((r) => (r.textContent ?? '').includes('procedural previs')),
   'no video key: all four clips are procedural previs, none claims to be AI video',
 )
+
+await click('next →') // step 7 -> step 8
 const lensScenes = [...document.querySelectorAll('[data-lens-scene]')].map((e) => e.getAttribute('data-lens-scene'))
 ok(lensScenes.length === 2 && lensScenes[0] !== lensScenes[1], `player A and B get different act threes (${lensScenes.join(' / ')})`)
+
+await click('next →') // step 8 -> step 9
 await click('publish episode')
 await flush(150)
-ok(has('live for every employee') && has('live for employees'), 'episode published and listed as live in the library')
+ok(has('on the Rick and Morty shelf'), 'episode published')
+
+/* Finishing setup is a separate, one-time action behind its own rule — it
+ * only lights up once something is published, and persists past a reload. */
+await click('finish setup')
+await flush(150)
+ok(localStorage.getItem('onboard.setup.v1') === 'true', 'finishing setup persists onboard.setup.v1')
+
 await click('play it')
 await flush(250)
+await flush(500)
+ok(await waitFor(() => has('start episode'), 8000), 'intro eventually shows (extra wait)')
 ok(has('generated episode') && has('validated graph'), 'intro shows generated provenance')
 await click('start episode')
 await flush(250)
@@ -465,7 +588,7 @@ ok(has('what actually happened') && has('K-'), 'generated consequence teaches wi
 const exitBtn = document.querySelector<HTMLElement>('button[aria-label="Exit episode"]')
 if (exitBtn) await act(async () => { exitBtn.click(); await sleep(200) })
 await flush(300)
-ok(has('BORING MATERIAL'), 'an admin leaving a preview returns to the Studio, not a show lobby')
+ok(has('Episode builder'), 'an admin leaving a preview returns to the Studio, not a show lobby')
 
 console.log('\n=== 11c. EMPLOYEE: THE ADMIN’S EPISODE, IN THE SHOW THEY PICKED ===')
 await click('account menu')
@@ -483,6 +606,20 @@ await click('episodes')
 await flush(250)
 await pickShow('Rick and Morty')
 ok(has('Rick and Morty') && has('FIRST'), 'back on Rick and Morty for the second run')
+
+/* Sections 12+ replay the ORIGINAL episode as the ordinary player this suite
+ * has been all along — switch back rather than carrying the admin session
+ * forward, the same real sign-in path used to become admin above. Signing in
+ * as an employee always asks for a show again (section 0's guard), so the
+ * show has to be repicked too. */
+await click('account menu')
+await click('sign out')
+await flush(150)
+await click('Company SSO')
+await flush(150)
+ok(has('Pick your show'), 'signing back in as an employee asks for the show again')
+await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(150) })
+await flush(150)
 
 console.log('\n=== 12. SECOND RUN: THE FAILURE BRANCHES ===')
 await openProfile()                // reset lives on the profile screen

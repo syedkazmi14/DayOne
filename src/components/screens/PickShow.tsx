@@ -84,7 +84,14 @@ export function PickShow() {
                   <h2 className="font-sans text-[17px] font-semibold tracking-[-0.01em]" style={{ color: group.accent }}>
                     {group.name}
                   </h2>
-                  <p className="mt-1.5 font-sans text-[12.5px] font-light leading-snug text-bone-dim">
+                  {/* The block is bottom-anchored, so a two-line tagline used to
+                    * lift its title a line above the three-line ones and the row
+                    * of headings came out ragged. Reserving three lines here —
+                    * the most any tagline wraps to at the narrowest column —
+                    * keeps every title and status line on the same baseline, and
+                    * the copy runs downward from the title rather than pushing
+                    * it up. min-h, not h: a longer tagline still shows in full. */}
+                  <p className="mt-1.5 min-h-[4.2em] font-sans text-[12.5px] font-light leading-snug text-bone-dim">
                     {group.tagline}
                   </p>
                   <div className="mt-3 font-sans text-[12px] text-bone-faint">

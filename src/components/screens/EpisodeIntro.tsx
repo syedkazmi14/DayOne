@@ -93,7 +93,7 @@ export function EpisodeIntro() {
               <div className="mt-9">
                 <button
                   onClick={() => dispatch({ type: 'START_EPISODE' })}
-                  className="group inline-flex items-center gap-3 rounded bg-signal px-10 py-4 font-mono text-[12px] uppercase tracking-ultra text-ink-900 transition-all duration-300 hover:bg-signal-hot hover:shadow-[0_0_60px_-12px_rgba(245,165,36,.8)]"
+                  className="group inline-flex items-center gap-3 rounded bg-signal px-10 py-4 font-mono text-[12px] uppercase tracking-ultra text-signal-ink transition-all duration-300 hover:bg-signal-hot hover:shadow-[0_0_60px_-12px_rgba(245,165,36,.8)]"
                 >
                   <Play size={14} fill="currentColor" />
                   start episode

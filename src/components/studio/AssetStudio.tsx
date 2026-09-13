@@ -1,5 +1,5 @@
 import { Film, Image as ImageIcon, Mic, Play, Shapes } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { characterGroups } from '@/content/characterGroups'
 import { getCharacter } from '@/content/characters'
 import { attachAsset, CLIPS_PER_SHOW, planEpisodeAssets, visualsFor, type AssetPlanItem } from '@/media/assetPlan'
@@ -25,11 +25,20 @@ import { Btn, Chip } from '../ui/Bits'
  * ========================================================================== */
 
 type RowStatus = 'queued' | 'rendering' | 'generated' | 'procedural' | 'runtime' | 'blocked' | 'failed'
-interface Row {
+export interface Row {
   status: RowStatus
   note?: string
   startedAt?: number
 }
+
+/**
+ * The wizard mounts one step at a time, so a step's generation state can no
+ * longer live in that step — navigating away would unmount it mid-render and
+ * throw away every row's progress and elapsed timer while the async work kept
+ * running underneath. The parent owns this instead, so the work simply keeps
+ * writing into state that outlives the component that started it.
+ */
+export type AssetRun = { rows: Record<string, Row>; running: boolean }
 
 const STATUS_CHIP: Record<RowStatus, { tone: 'good' | 'signal' | 'danger' | 'neutral' | 'cyan'; label: string }> = {
   queued: { tone: 'signal', label: 'queued' },
@@ -130,12 +139,22 @@ function ShowTabs({ active, onPick, progress }: { active: string; onPick: (id: s
 
 /* ------------------------------------------------------------------ images */
 
-export function VisualAssets({ episode, onChange }: { episode: Episode; onChange: (ep: Episode) => void }) {
+export function VisualAssets({
+  episode,
+  onChange,
+  run: runState,
+  setRun,
+}: {
+  episode: Episode
+  onChange: (ep: Episode) => void
+  run: AssetRun
+  setRun: Dispatch<SetStateAction<AssetRun>>
+}) {
   const { health } = useMediaStatus()
   const plan = useMemo(() => planAllShows(episode, 'image'), [episode.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const [show, setShow] = useState(episode.groupId)
-  const [rows, setRows] = useState<Record<string, Row>>({})
-  const [running, setRunning] = useState(false)
+  const rows = runState.rows
+  const running = runState.running
   const now = useNow(running)
   const image = imageProvider()
   const live = image.tier === 'generated'
@@ -149,9 +168,9 @@ export function VisualAssets({ episode, onChange }: { episode: Episode; onChange
    * again. `only` renders one show — a cheap way to judge the look first.
    */
   async function run(force: boolean, only?: string) {
-    setRunning(true)
+    setRun((r) => ({ ...r, running: true }))
     let current = episode
-    const set = (key: string, row: Row) => setRows((r) => ({ ...r, [key]: row }))
+    const set = (key: string, row: Row) => setRun((r) => ({ ...r, rows: { ...r.rows, [key]: row } }))
     await pool(only ? plan.filter((i) => i.groupId === only) : plan, 4, async (item) => {
       set(item.key, { status: 'rendering', startedAt: Date.now() })
       // Without a model that takes character references, a still is the setting alone.
@@ -175,7 +194,7 @@ export function VisualAssets({ episode, onChange }: { episode: Episode; onChange
         note: asset.storageKey && `${asset.storageKey}${detail}${reused ? ' · reused from storage' : ''}`,
       })
     })
-    setRunning(false)
+    setRun((r) => ({ ...r, running: false }))
   }
 
   const finished = plan.length > 0 && plan.every((i) => settled(rows[i.key]))
@@ -228,12 +247,22 @@ export function VisualAssets({ episode, onChange }: { episode: Episode; onChange
 
 /* ------------------------------------------------------------------- video */
 
-export function VideoAssets({ episode, onChange }: { episode: Episode; onChange: (ep: Episode) => void }) {
+export function VideoAssets({
+  episode,
+  onChange,
+  run: runState,
+  setRun,
+}: {
+  episode: Episode
+  onChange: (ep: Episode) => void
+  run: AssetRun
+  setRun: Dispatch<SetStateAction<AssetRun>>
+}) {
   const { health } = useMediaStatus()
   const clips = useMemo(() => planAllShows(episode, 'video'), [episode.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const [show, setShow] = useState(episode.groupId)
-  const [rows, setRows] = useState<Record<string, Row>>({})
-  const [running, setRunning] = useState(false)
+  const rows = runState.rows
+  const running = runState.running
   const now = useNow(running)
   const video = videoProvider()
   const live = video.tier === 'generated'
@@ -245,9 +274,9 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
 
   /** Clips already in storage are reused; `force` (re-render) pays for new predictions. `only` renders one show. */
   async function run(force: boolean, only?: string) {
-    setRunning(true)
+    setRun((r) => ({ ...r, running: true }))
     let current = episode
-    const set = (key: string, row: Row) => setRows((r) => ({ ...r, [key]: row }))
+    const set = (key: string, row: Row) => setRun((r) => ({ ...r, rows: { ...r.rows, [key]: row } }))
     await Promise.all(
       (only ? clips.filter((i) => i.groupId === only) : clips).map(async (item) => {
         const scene = current.scenes[item.sceneId]
@@ -277,7 +306,7 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
         })
       }),
     )
-    setRunning(false)
+    setRun((r) => ({ ...r, running: false }))
   }
 
   const finished = clips.length > 0 && clips.every((i) => settled(rows[i.key]))
@@ -335,11 +364,21 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
 
 /* ------------------------------------------------------------------- voice */
 
-export function VoiceAssets({ episode, onChange }: { episode: Episode; onChange: (ep: Episode) => void }) {
+export function VoiceAssets({
+  episode,
+  onChange,
+  run: runState,
+  setRun,
+}: {
+  episode: Episode
+  onChange: (ep: Episode) => void
+  run: AssetRun
+  setRun: Dispatch<SetStateAction<AssetRun>>
+}) {
   useMediaStatus()
   const lines = useMemo(() => planEpisodeAssets(episode).filter((i) => i.kind === 'audio'), [episode.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const [rows, setRows] = useState<Record<string, Row>>({})
-  const [running, setRunning] = useState(false)
+  const rows = runState.rows
+  const running = runState.running
   const provider = audioProvider()
 
   const byCharacter = useMemo(() => {
@@ -349,7 +388,7 @@ export function VoiceAssets({ episode, onChange }: { episode: Episode; onChange:
   }, [lines])
 
   async function run() {
-    setRunning(true)
+    setRun((r) => ({ ...r, running: true }))
     let current = episode
     await pool(lines, 3, async (item) => {
       const scene = current.scenes[item.sceneId]
@@ -364,9 +403,9 @@ export function VoiceAssets({ episode, onChange }: { episode: Episode; onChange:
         current = attachAsset(current, item, asset)
         onChange(current)
       }
-      setRows((r) => ({ ...r, [item.key]: { status: status === 'stored' ? 'generated' : status, note: error } }))
+      setRun((r) => ({ ...r, rows: { ...r.rows, [item.key]: { status: status === 'stored' ? 'generated' : status, note: error } } }))
     })
-    setRunning(false)
+    setRun((r) => ({ ...r, running: false }))
   }
 
   const counts = Object.values(rows).reduce<Record<string, number>>((acc, r) => ({ ...acc, [r.status]: (acc[r.status] ?? 0) + 1 }), {})

@@ -6,6 +6,39 @@
   :root {
     color-scheme: dark;
     --ease-cine: cubic-bezier(0.16, 1, 0.3, 1);
+
+    /* PALETTE — space-separated RGB channels, because every Tailwind colour
+     * token resolves as rgb(var(--x) / <alpha-value>) (see tailwind.config.js).
+     * Channels, not hex, is what keeps bg-signal/45 and ink-900/72 working.
+     *
+     * These are the defaults. The theme picker in the account menu overwrites
+     * them on :root at runtime, so anything that reads them follows along —
+     * which is why the scrims and glass surfaces below are written against the
+     * variables rather than against literal rgba(). */
+    --ink-900: 5 6 7;
+    --ink-850: 8 9 12;
+    --ink-800: 12 14 18;
+    --ink-700: 18 21 27;
+    --ink-600: 25 29 37;
+    --ink-500: 35 40 51;
+    --ink-400: 51 58 71;
+
+    --bone: 237 233 226;
+    --bone-dim: 168 163 153;
+    --bone-faint: 110 107 101;
+
+    --signal: 245 165 36;
+    --signal-hot: 255 122 26;
+    --signal-deep: 178 103 8;
+    /* Overwritten by applyTheme, measured against the live accent. */
+    --signal-ink: 5 6 7;
+
+    --cyan: 111 211 216;
+    --cyan-deep: 44 127 133;
+    --danger: 255 77 77;
+    --danger-deep: 122 31 31;
+    --good: 84 209 160;
+    --good-deep: 31 107 79;
     /* One radius for every surface. Small on purpose: enough to read as
      * finished, not enough to soften the cinematic frame. The letterbox bars,
      * scene canvas and full-bleed artwork stay square. */
@@ -26,11 +59,11 @@
   }
 
   ::selection {
-    background: rgba(245, 165, 36, 0.28);
+    background: rgb(var(--signal) / 0.28);
   }
 
   *:focus-visible {
-    outline: 1px solid rgba(245, 165, 36, 0.7);
+    outline: 1px solid rgb(var(--signal) / 0.7);
     outline-offset: 2px;
   }
 
@@ -42,7 +75,7 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(237, 233, 226, 0.14);
+    background: rgb(var(--bone) / 0.14);
     border-radius: 99px;
   }
 }
@@ -65,14 +98,14 @@
 
   /* Glass panel — subtle, single hairline, no candy gradients. */
   .glass {
-    background: linear-gradient(180deg, rgba(237, 233, 226, 0.055), rgba(237, 233, 226, 0.018));
-    border: 1px solid rgba(237, 233, 226, 0.1);
+    background: linear-gradient(180deg, rgb(var(--bone) / 0.055), rgb(var(--bone) / 0.018));
+    border: 1px solid rgb(var(--bone) / 0.1);
     backdrop-filter: blur(18px) saturate(1.1);
     border-radius: var(--radius);
   }
   .glass-strong {
-    background: linear-gradient(180deg, rgba(10, 11, 14, 0.86), rgba(10, 11, 14, 0.72));
-    border: 1px solid rgba(237, 233, 226, 0.12);
+    background: linear-gradient(180deg, rgb(var(--ink-850) / 0.86), rgb(var(--ink-850) / 0.72));
+    border: 1px solid rgb(var(--bone) / 0.12);
     backdrop-filter: blur(26px) saturate(1.15);
     border-radius: var(--radius);
   }
@@ -80,15 +113,15 @@
    * over full-bleed episode artwork of any brightness, and a translucent panel
    * left the show names competing with whatever was behind them. */
   .menu-surface {
-    background: linear-gradient(180deg, rgba(8, 9, 12, 0.985), rgba(8, 9, 12, 0.96));
-    border: 1px solid rgba(237, 233, 226, 0.14);
+    background: linear-gradient(180deg, rgb(var(--ink-850) / 0.985), rgb(var(--ink-850) / 0.96));
+    border: 1px solid rgb(var(--bone) / 0.14);
     backdrop-filter: blur(26px) saturate(1.15);
     border-radius: var(--radius);
     box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.75);
   }
 
   .hairline {
-    box-shadow: inset 0 1px 0 rgba(237, 233, 226, 0.07);
+    box-shadow: inset 0 1px 0 rgb(var(--bone) / 0.07);
   }
 
   .letterbox::before,
@@ -120,38 +153,38 @@
   .scrim-top {
     background-image: linear-gradient(
       to bottom,
-      rgba(5, 6, 7, 1) 0%,
-      rgba(5, 6, 7, 0.98) 12%,
-      rgba(5, 6, 7, 0.92) 24%,
-      rgba(5, 6, 7, 0.8) 38%,
-      rgba(5, 6, 7, 0.62) 52%,
-      rgba(5, 6, 7, 0.4) 68%,
-      rgba(5, 6, 7, 0.18) 84%,
-      rgba(5, 6, 7, 0) 100%
+      rgb(var(--ink-900) / 1) 0%,
+      rgb(var(--ink-900) / 0.98) 12%,
+      rgb(var(--ink-900) / 0.92) 24%,
+      rgb(var(--ink-900) / 0.8) 38%,
+      rgb(var(--ink-900) / 0.62) 52%,
+      rgb(var(--ink-900) / 0.4) 68%,
+      rgb(var(--ink-900) / 0.18) 84%,
+      rgb(var(--ink-900) / 0) 100%
     );
   }
   .scrim-bottom {
     background-image: linear-gradient(
       to top,
-      rgba(5, 6, 7, 1) 0%,
-      rgba(5, 6, 7, 0.94) 16%,
-      rgba(5, 6, 7, 0.82) 32%,
-      rgba(5, 6, 7, 0.62) 50%,
-      rgba(5, 6, 7, 0.38) 68%,
-      rgba(5, 6, 7, 0.16) 85%,
-      rgba(5, 6, 7, 0) 100%
+      rgb(var(--ink-900) / 1) 0%,
+      rgb(var(--ink-900) / 0.94) 16%,
+      rgb(var(--ink-900) / 0.82) 32%,
+      rgb(var(--ink-900) / 0.62) 50%,
+      rgb(var(--ink-900) / 0.38) 68%,
+      rgb(var(--ink-900) / 0.16) 85%,
+      rgb(var(--ink-900) / 0) 100%
     );
   }
   .scrim-left {
     background-image: linear-gradient(
       to right,
-      rgba(5, 6, 7, 1) 0%,
-      rgba(5, 6, 7, 0.96) 14%,
-      rgba(5, 6, 7, 0.88) 28%,
-      rgba(5, 6, 7, 0.74) 42%,
-      rgba(5, 6, 7, 0.56) 58%,
-      rgba(5, 6, 7, 0.4) 74%,
-      rgba(5, 6, 7, 0.3) 100%
+      rgb(var(--ink-900) / 1) 0%,
+      rgb(var(--ink-900) / 0.96) 14%,
+      rgb(var(--ink-900) / 0.88) 28%,
+      rgb(var(--ink-900) / 0.74) 42%,
+      rgb(var(--ink-900) / 0.56) 58%,
+      rgb(var(--ink-900) / 0.4) 74%,
+      rgb(var(--ink-900) / 0.3) 100%
     );
   }
 
@@ -172,14 +205,14 @@
   /* Choice button — deliberate, mechanical, no glow soup. */
   .choice {
     @apply relative w-full overflow-hidden rounded text-left transition-all duration-300;
-    background: linear-gradient(100deg, rgba(237, 233, 226, 0.05), rgba(237, 233, 226, 0.015));
-    border: 1px solid rgba(237, 233, 226, 0.12);
+    background: linear-gradient(100deg, rgb(var(--bone) / 0.05), rgb(var(--bone) / 0.015));
+    border: 1px solid rgb(var(--bone) / 0.12);
   }
   .choice::after {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(100deg, rgba(245, 165, 36, 0.16), rgba(245, 165, 36, 0) 60%);
+    background: linear-gradient(100deg, rgb(var(--signal) / 0.16), rgb(var(--signal) / 0) 60%);
     opacity: 0;
     transition: opacity 0.35s var(--ease-cine);
   }
@@ -188,12 +221,12 @@
     opacity: 1;
   }
   .choice:hover {
-    border-color: rgba(245, 165, 36, 0.5);
+    border-color: rgb(var(--signal) / 0.5);
     transform: translateX(4px);
   }
 
   .rail {
-    background: rgba(237, 233, 226, 0.12);
+    background: rgb(var(--bone) / 0.12);
   }
 
   /* Portal-gun status bar: a soft band of light travelling down the beam so it

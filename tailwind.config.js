@@ -1,3 +1,6 @@
+/** Resolve a palette token through its channel variable, alpha modifiers intact. */
+const channels = (name) => `rgb(var(${name}) / <alpha-value>)`
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
@@ -7,21 +10,35 @@ export default {
       // /12 and /94 are silently dropped — which had quietly removed several
       // scrims and hairline borders. Allow every integer.
       opacity: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [i, String(i / 100)])),
+      /* Every palette token resolves through a CSS variable holding SPACE-
+       * SEPARATED RGB CHANNELS, not a hex string, so `<alpha-value>` keeps
+       * working: the codebase leans on modifiers like bg-signal/45 and
+       * ink-900/72 in well over a hundred places, and a var holding `#F5A524`
+       * would silently drop every one of them.
+       *
+       * The channel values live in src/index.css (:root) and the theme picker
+       * overwrites them at runtime — see src/theme/themes.ts. */
       colors: {
         ink: {
-          900: '#050607',
-          850: '#08090C',
-          800: '#0C0E12',
-          700: '#12151B',
-          600: '#191D25',
-          500: '#232833',
-          400: '#333A47',
+          900: channels('--ink-900'),
+          850: channels('--ink-850'),
+          800: channels('--ink-800'),
+          700: channels('--ink-700'),
+          600: channels('--ink-600'),
+          500: channels('--ink-500'),
+          400: channels('--ink-400'),
         },
-        bone: { DEFAULT: '#EDE9E2', dim: '#A8A399', faint: '#6E6B65' },
-        signal: { DEFAULT: '#F5A524', hot: '#FF7A1A', deep: '#B26708' },
-        cyan: { DEFAULT: '#6FD3D8', deep: '#2C7F85' },
-        danger: { DEFAULT: '#FF4D4D', deep: '#7A1F1F' },
-        good: { DEFAULT: '#54D1A0', deep: '#1F6B4F' },
+        bone: { DEFAULT: channels('--bone'), dim: channels('--bone-dim'), faint: channels('--bone-faint') },
+        signal: {
+          DEFAULT: channels('--signal'),
+          hot: channels('--signal-hot'),
+          deep: channels('--signal-deep'),
+          /* Text/icon colour for anything sitting ON a signal fill. */
+          ink: channels('--signal-ink'),
+        },
+        cyan: { DEFAULT: channels('--cyan'), deep: channels('--cyan-deep') },
+        danger: { DEFAULT: channels('--danger'), deep: channels('--danger-deep') },
+        good: { DEFAULT: channels('--good'), deep: channels('--good-deep') },
       },
       fontFamily: {
         sans: ['DM Sans', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
