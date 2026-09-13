@@ -846,6 +846,65 @@ ok(voiced.status === 'stored' && voiced.asset?.kind === 'audio', 'a pre-rendered
 ok((await new RuntimeSpeechProvider().renderLine()).status === 'runtime', 'without ElevenLabs nothing claims to be pre-rendered')
 
 /* ------------------------------------------------ media server */
+section('ONE WORLD PER SHOW · PER-SHOW IMAGES AND CLIPS')
+{
+  const { recastEpisode } = await import('../src/engine/recast')
+  const { SHOW_WORLDS } = await import('../src/content/showWorlds')
+  const { characterGroups } = await import('../src/content/characterGroups')
+  const { backgroundPrompt } = await import('../src/media/image')
+  const { visualsFor } = await import('../src/media/assetPlan')
+  const ep = phishing.episode
+  ok(characterGroups.every((g) => !!SHOW_WORLDS[g.id]), 'every show has a world')
+  const plans = Object.fromEntries(characterGroups.map((g) => [g.id, planEpisodeAssets(ep, { groupId: g.id })]))
+  const own0 = () => ep.groupId
+  const visible = Object.values(ep.scenes).filter((s) => !s.variants?.length).length
+  ok(
+    characterGroups.every(
+      (g) =>
+        plans[g.id].filter((i) => i.kind === 'video').length === 2 &&
+        plans[g.id].filter((i) => i.kind === 'image').length === visible &&
+        plans[g.id].every((i) => i.groupId === g.id && i.kind !== 'audio'),
+    ),
+    'each show plans a still per scene and 2 clips (no audio — the recast cast speaks live)',
+  )
+  const clipScenes = plans[own0()].filter((i) => i.kind === 'video').map((i) => i.sceneId)
+  ok(clipScenes[0] === ep.entrySceneId && ep.scenes[clipScenes[1]]?.outcome?.tone === 'bad', 'the two clips are the cold open and the incident')
+  const allKeys = characterGroups.flatMap((g) => plans[g.id].map((i) => i.key))
+  ok(new Set(allKeys).size === allKeys.length, 'plan keys never collide across shows')
+  const openFor = (id: string) => plans[id].find((i) => i.keyframe && i.sceneId === ep.entrySceneId)?.prompt ?? ''
+  ok(/space.station/i.test(openFor('rick-and-morty')) && /power plant/i.test(openFor('the-simpsons')) && /snowy/i.test(openFor('south-park')), 'each cold open is set in its own world')
+  const named = /\b(rick|morty|simpsons?|homer|bart|cartman|kyle|stan|griffin|peter|stewie)\b|south park|family guy/i
+  ok(
+    characterGroups.every((g) => plans[g.id].filter((i) => i.kind === 'video' || !i.characters?.length).every((i) => !named.test(i.prompt) && !named.test(i.fallbackPrompt ?? ''))),
+    'clip and setting-only prompts never name a show or its characters',
+  )
+  const { getCharacter } = await import('../src/content/characters')
+  const simpsonsView = recastEpisode(ep, 'the-simpsons')
+  const withCast = plans['the-simpsons'].find((i) => i.kind === 'image' && i.characters?.length)!
+  const speakers = [...new Set(simpsonsView.scenes[withCast.sceneId].dialogue.map((d) => d.characterId).filter((c) => c !== 'you'))].slice(0, 4)
+  ok(
+    withCast.characters!.join() === speakers.join() && speakers.every((c) => getCharacter(c).groupId === 'the-simpsons' && withCast.prompt.includes(getCharacter(c).name)),
+    'a still references exactly the characters who speak in that scene, from that show’s cast',
+  )
+  ok(!/animated/i.test(backgroundPrompt(ep.scenes.g_d1_good)), 'an unscoped prompt is unchanged')
+
+  const own = ep.groupId
+  const [other, third] = characterGroups.map((g) => g.id).filter((id) => id !== own)
+  const img = (url: string) => ({ kind: 'image' as const, tier: 'generated' as const, provider: 'test', url, createdAt: 'now' })
+  const ownBg = plans[own].find((i) => i.kind === 'image' && !i.keyframe)!
+  const otherBg = plans[other].find((i) => i.key === ownBg.key.replace(`${own}:`, `${other}:`))!
+  const dressed = attachAsset(attachAsset(ep, ownBg, img('/own.jpg')), otherBg, img('/other.jpg'))
+  const sid = ownBg.sceneId
+  ok(
+    dressed.scenes[sid].assets?.background?.url === '/own.jpg' && dressed.scenes[sid].assets?.byShow?.[other]?.background?.url === '/other.jpg',
+    "the episode's own show keeps the top-level assets; other shows are stored per show",
+  )
+  ok(recastEpisode(dressed, other).scenes[sid].assets?.background?.url === '/other.jpg', 'recasting plays that show’s own world')
+  ok(!recastEpisode(dressed, third).scenes[sid].assets?.background, 'a show with nothing rendered falls back to previs, never another show’s art')
+  ok(recastEpisode(dressed, own) === dressed, 'the original show still gets the original episode')
+  ok(visualsFor(dressed, sid, other)?.background?.url === '/other.jpg' && visualsFor(dressed, sid, own)?.background?.url === '/own.jpg', 'the Studio reads each show’s visuals')
+}
+
 section('MEDIA SERVER · STORAGE + HONEST CONFIG')
 const assetRoot = mkdtempSync(path.join(tmpdir(), 'onboard-assets-'))
 const mediaPort = 8900 + Math.floor(Math.random() * 90)
@@ -855,6 +914,7 @@ const media = spawn(process.execPath, ['server/mediaServer.mjs'], {
     MEDIA_SERVER_PORT: String(mediaPort),
     REPLICATE_API_TOKEN: '',
     SUPABASE_URL: '',
+    GEMINI_API_KEY: '',
     ASSET_ROOT: assetRoot,
     CONTENT_DB_PATH: path.join(assetRoot, 'content.db'),
     VOICE_PROXY_PORT: '1',
@@ -951,6 +1011,7 @@ const replicateMedia = spawn(process.execPath, ['server/mediaServer.mjs'], {
     REPLICATE_API_TOKEN: FAKE_TOKEN,
     REPLICATE_API_BASE: `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}/v1`,
     SUPABASE_URL: '',
+    GEMINI_API_KEY: '',
     ASSET_ROOT: replicateRoot,
     CONTENT_DB_PATH: path.join(replicateRoot, 'content.db'),
     VOICE_PROXY_PORT: '1',
@@ -1034,10 +1095,136 @@ ok(replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length === 2, '
   ok(imgAgain.reused === true && fluxCalls() === 1, 'a scene image already in storage is reused')
   const forced = await readBack(await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'Slow push-in.', imageKey: imgBody.storageKey, force: true }))
   ok(forced.status === 'queued' && !forced.reused && wanCalls() === wanBefore + 1, 'force: true (re-render) pays for a new prediction')
+  const showImg = await readBack(await rPost('image', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'A space station.', showId: 'rick-and-morty' }))
+  ok(showImg.storageKey === 'company/episodes/gen-test/rick-and-morty/backgrounds/g_open.jpg' && !showImg.reused, 'a per-show image gets its own key — it never reuses another show’s')
+  const showVid = await readBack(await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'Docking.', imageKey: showImg.storageKey, showId: 'rick-and-morty' }))
+  let showDone = showVid
+  for (let i = 0; i < 10 && !['ready', 'failed'].includes(showDone.status); i++) showDone = await readBack(await fetch(`${rBase}/video/${showVid.jobId}`))
+  ok(showDone.status === 'ready' && showDone.storageKey === 'company/episodes/gen-test/rick-and-morty/videos/g_open.mp4', 'a per-show clip animates that show’s keyframe and is stored under the show')
+  ok((await rPost('image', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'x', showId: '../escape' })).status === 400, 'a malformed show id is refused')
   ok(toBrowser.every(b => !b.includes(FAKE_TOKEN)), 'the token never appears in any response the browser can see')
 } finally {
   replicateMedia.kill()
   rmSync(replicateRoot, { recursive: true, force: true })
+}
+
+/* ------------------------------------------------ fake Gemini */
+section('MEDIA SERVER · GEMINI STILLS WITH CHARACTER REFERENCES (fake Gemini API, no network)')
+const FAKE_GEMINI_KEY = 'AIza_fake_gemini_key_for_tests_only'
+type GeminiPart = { text?: string; inline_data?: { mime_type: string; data: string } }
+const geminiSeen: { url: string; key?: string; body: { contents?: { parts?: GeminiPart[] }[]; generationConfig?: { responseModalities?: string[]; imageConfig?: { aspectRatio?: string; imageSize?: string } } } }[] = []
+let geminiThrottled = false
+const fakeGemini = createServer(async (req, res) => {
+  const chunks: Buffer[] = []
+  for await (const c of req) chunks.push(c as Buffer)
+  const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+  geminiSeen.push({ url: req.url ?? '', key: req.headers['x-goog-api-key'] as string | undefined, body })
+  const reply = (status: number, obj: unknown) => {
+    res.writeHead(status, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(obj))
+  }
+  if (req.url !== '/v1beta/models/gemini-3.1-flash-image:generateContent') return reply(404, { error: { message: 'not found' } })
+  if (req.headers['x-goog-api-key'] !== FAKE_GEMINI_KEY) return reply(403, { error: { message: 'API key not valid' } })
+  const text = (body.contents?.[0]?.parts ?? []).find((p: GeminiPart) => p.text)?.text ?? ''
+  if (text.includes('NO_CREDIT'))
+    return reply(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Your prepayment credits are depleted. Please go to AI Studio to manage your project and billing.' } })
+  if (text.includes('THROTTLE_ONCE') && !geminiThrottled) {
+    geminiThrottled = true
+    return reply(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '0.1s' }] } })
+  }
+  if (text.includes('FORCE_REFUSAL')) return reply(200, { candidates: [{ finishReason: 'IMAGE_SAFETY', content: { parts: [] } }] })
+  reply(200, {
+    candidates: [
+      { finishReason: 'STOP', content: { parts: [{ text: 'Here is the scene.' }, { inlineData: { mimeType: 'image/png', data: Buffer.from('FAKEPNG').toString('base64') } }] } },
+    ],
+  })
+})
+await new Promise<void>((r) => fakeGemini.listen(0, '127.0.0.1', () => r()))
+const geminiRoot = mkdtempSync(path.join(tmpdir(), 'onboard-gemini-'))
+const geminiPort = 9300 + Math.floor(Math.random() * 90)
+const geminiMedia = spawn(process.execPath, ['server/mediaServer.mjs'], {
+  env: {
+    ...process.env,
+    MEDIA_SERVER_PORT: String(geminiPort),
+    GEMINI_API_KEY: FAKE_GEMINI_KEY,
+    GEMINI_API_BASE: `http://127.0.0.1:${(fakeGemini.address() as AddressInfo).port}/v1beta`,
+    REPLICATE_API_TOKEN: FAKE_TOKEN,
+    REPLICATE_API_BASE: `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}/v1`,
+    SUPABASE_URL: '',
+    ASSET_ROOT: geminiRoot,
+    CONTENT_DB_PATH: path.join(geminiRoot, 'content.db'),
+    VOICE_PROXY_PORT: '1',
+  },
+  stdio: 'ignore',
+})
+const gBase = `http://localhost:${geminiPort}/api/media`
+const gSeen: string[] = []
+const gRead = async (r: Response) => {
+  const t = await r.text()
+  gSeen.push(t)
+  return { httpStatus: r.status, ...JSON.parse(t) }
+}
+const gPost = (route: string, body: unknown) => fetch(`${gBase}/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+try {
+  let gHealth: { image: { provider: string; model: string; characters?: boolean }; video: { provider: string } } | null = null
+  for (let i = 0; i < 50 && !gHealth; i++) {
+    await new Promise(r => setTimeout(r, 100))
+    try { gHealth = await gRead(await fetch(`${gBase}/health`)) } catch { /* not up yet */ }
+  }
+  ok(
+    gHealth?.image.provider === 'gemini' && gHealth.image.model === 'gemini-3.1-flash-image' && gHealth.image.characters === true && gHealth.video.provider === 'replicate',
+    'with a Gemini key, stills come from Gemini (with character references) and clips still come from Replicate',
+  )
+
+  const still = await gRead(await gPost('image', { episodeId: 'gen-test', sceneId: 'g_d1', showId: 'rick-and-morty', prompt: 'Two characters at a desk.', references: ['rick', 'morty'] }))
+  const sent = geminiSeen.at(-1)!
+  const inline = (sent.body.contents?.[0]?.parts ?? []).filter((p) => p.inline_data)
+  ok(
+    still.httpStatus === 200 && still.storageKey === 'company/episodes/gen-test/rick-and-morty/backgrounds/g_d1.png' && readFileSync(path.join(geminiRoot, still.storageKey), 'utf8') === 'FAKEPNG',
+    'the still is stored under the show, as the PNG Gemini returned',
+  )
+  ok(still.characters?.join() === 'rick,morty', 'the stored still records which characters it draws')
+  ok(
+    sent.key === FAKE_GEMINI_KEY && inline.length === 2 && inline[0].inline_data!.data === readFileSync('public/characters/rick.jpg').toString('base64'),
+    'Gemini receives the prompt plus each character’s portrait as a reference image, authenticated server-side',
+  )
+  ok(sent.body.generationConfig?.imageConfig?.aspectRatio === '16:9' && (sent.body.generationConfig?.responseModalities ?? []).includes('IMAGE'), 'the request asks for a 16:9 image')
+
+  const callsBefore = geminiSeen.length
+  const again = await gRead(await gPost('image', { episodeId: 'gen-test', sceneId: 'g_d1', showId: 'rick-and-morty', prompt: 'Two characters at a desk.', references: ['rick', 'morty'] }))
+  ok(again.reused === true && again.storageKey === still.storageKey && geminiSeen.length === callsBefore, 'a stored still is reused — Gemini is not called again')
+
+  const badRefs = await Promise.all([
+    gPost('image', { episodeId: 'gen-test', sceneId: 'g_d2', prompt: 'x', references: ['nobody'] }),
+    gPost('image', { episodeId: 'gen-test', sceneId: 'g_d2', prompt: 'x', references: ['../../package'] }),
+    gPost('image', { episodeId: 'gen-test', sceneId: 'g_d2', prompt: 'x', references: ['rick', 'morty', 'summer', 'jerry', 'homer'] }),
+  ])
+  ok(badRefs.every((r) => r.status === 400) && geminiSeen.length === callsBefore, 'only known characters, at most four, can be referenced — checked before Gemini is called')
+
+  const refused = await gRead(await gPost('image', { episodeId: 'gen-test', sceneId: 'g_d2', prompt: 'FORCE_REFUSAL', references: ['rick'] }))
+  ok(refused.httpStatus === 422 && refused.error === 'refused' && /IMAGE_SAFETY/.test(refused.message), 'a refused image is reported as refused, with Gemini’s reason')
+  let refusedStored = true
+  try { readFileSync(path.join(geminiRoot, 'company/episodes/gen-test/backgrounds/g_d2.png')) } catch { refusedStored = false }
+  ok(!refusedStored, 'nothing is stored for a refused image')
+
+  const throttled = await gRead(await gPost('image', { episodeId: 'gen-test', sceneId: 'g_d3', prompt: 'THROTTLE_ONCE', references: [] }))
+  ok(throttled.httpStatus === 200 && geminiThrottled, 'a rate-limited (429) Gemini request is retried after its retryDelay')
+  const callsBeforeCredit = geminiSeen.length
+  const creditStart = Date.now()
+  const noCredit = await gRead(await gPost('image', { episodeId: 'gen-test', sceneId: 'g_d4', prompt: 'NO_CREDIT', references: [] }))
+  ok(
+    noCredit.httpStatus === 502 && /prepayment credits are depleted/.test(noCredit.message) && geminiSeen.length === callsBeforeCredit + 1 && Date.now() - creditStart < 3000,
+    'an out-of-credit 429 fails at once with Gemini’s billing message — no retry loop',
+  )
+
+  const clip = await gRead(await gPost('video', { episodeId: 'gen-test', sceneId: 'g_d1', showId: 'rick-and-morty', prompt: 'They argue.', imageKey: still.storageKey }))
+  const wan = replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).at(-1)?.body?.input ?? {}
+  ok(clip.httpStatus === 202 && wan.image === `data:image/png;base64,${Buffer.from('FAKEPNG').toString('base64')}`, 'Replicate animates the Gemini still (PNG) into the clip')
+  ok(gSeen.every(b => !b.includes(FAKE_GEMINI_KEY) && !b.includes(FAKE_TOKEN)), 'neither key appears in any response the browser can see')
+} finally {
+  geminiMedia.kill()
+  fakeGemini.close()
+  rmSync(geminiRoot, { recursive: true, force: true })
 }
 
 /* ------------------------------------------------ fake Supabase */
@@ -1106,6 +1293,7 @@ const supaMedia = spawn(process.execPath, ['server/mediaServer.mjs'], {
     REPLICATE_API_TOKEN: FAKE_TOKEN,
     REPLICATE_API_BASE: `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}/v1`,
     SUPABASE_URL: supaUrl,
+    GEMINI_API_KEY: '',
     SUPABASE_SECRET_KEY: FAKE_SUPABASE_KEY,
     ASSET_ROOT: supaRoot,
     CONTENT_DB_PATH: path.join(supaRoot, 'content.db'),
@@ -1150,7 +1338,10 @@ try {
   const wanBeforeSupa = replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length
   let sVid = await sRead(await sPost('video', { episodeId: 'gen-supa', sceneId: 'g_open', prompt: 'Slow push-in.', imageKey: sImg.storageKey }))
   const sInput = replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).at(-1)?.body?.input ?? {}
-  ok(sVid.status === 'queued' && sInput.image === `data:image/jpeg;base64,${Buffer.from('FAKEJPEG').toString('base64')}`, 'Wan receives the keyframe read back from the bucket')
+  ok(
+    sVid.status === 'queued' && sInput.image === `${supaUrl}/storage/v1/object/public/dayone-assets/company/episodes/gen-supa/backgrounds/g_open.jpg`,
+    'Wan fetches the keyframe from its public bucket URL (a 1K still is too big to inline)',
+  )
   for (let i = 0; i < 10 && !['ready', 'failed'].includes(sVid.status); i++) sVid = await sRead(await fetch(`${sBase}/video/${sVid.jobId}`))
   ok(
     sVid.status === 'ready' && buckets.get('dayone-assets/company/episodes/gen-supa/videos/g_open.mp4')?.body.toString('utf8') === 'FAKEMP4' && String(sVid.url).includes('/object/public/dayone-assets/'),

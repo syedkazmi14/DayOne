@@ -582,7 +582,7 @@ export function Authoring() {
         <Step
           n={5}
           title="GENERATE VISUAL ASSETS"
-          detail="Dialogue scenes get a generated background with character sprites over it; each major beat gets a keyframe for its clip. Rendered once, here."
+          detail="Every scene gets a still in each show's world, drawn with the characters who speak in it. Rendered once per show, here — try one show first."
           state={step(!draft, hasImages)}
         >
           {draft && <VisualAssets episode={draft} onChange={onAssets} />}
@@ -602,7 +602,7 @@ export function Authoring() {
         <Step
           n={7}
           title="GENERATE CINEMATIC VIDEO"
-          detail="Four short clips — cold open, confrontation, incident, ending — each animated from its keyframe. Everything else stays background, sprite and voice."
+          detail="Two short clips per show — the cold open and the incident — each animated from that show's still. Every other scene is a still with voice."
           state={step(!draft, hasClips)}
         >
           {draft && <VideoAssets episode={draft} onChange={onAssets} />}

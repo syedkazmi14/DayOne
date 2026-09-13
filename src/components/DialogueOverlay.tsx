@@ -40,6 +40,7 @@ export function DialogueOverlay({
   onAdvance,
   voiceOn,
   audio,
+  inScene,
 }: {
   line: Dialogue
   index: number
@@ -48,6 +49,8 @@ export function DialogueOverlay({
   voiceOn: boolean
   /** Pre-rendered voice for this line, if the Studio generated one. */
   audio?: AssetRef
+  /** The scene's still already draws this character, so no portrait goes on top. */
+  inScene?: boolean
 }) {
   const ch = getCharacter(line.characterId)
   const isPlayer = line.characterId === 'you'
@@ -101,7 +104,7 @@ export function DialogueOverlay({
     <div className="absolute inset-0 z-20 flex cursor-pointer items-end" onClick={skipOrAdvance}>
       <div className="w-full px-6 pb-[10vh] sm:px-12 lg:px-20">
         <div className="mx-auto flex max-w-5xl items-end gap-5 sm:gap-8">
-          {!isPlayer && (
+          {!isPlayer && !inScene && (
             <motion.div
               key={ch.id}
               initial={{ opacity: 0, x: -28, filter: 'blur(6px)' }}

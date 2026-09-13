@@ -162,8 +162,9 @@ export function recastEpisode(ep: Episode, groupId: string | null | undefined): 
     choices: s.choices?.map((c) => ({ ...c, text: say(c.text)!, ledgerLabel: say(c.ledgerLabel)! })),
     outcome: s.outcome && { ...s.outcome, banner: say(s.outcome.banner)!, lesson: say(s.outcome.lesson)! },
     shot: { ...s.shot, prompt: say(s.shot.prompt)!, action: say(s.shot.action) },
-    // A pre-rendered line was spoken in the original character's voice; the new cast speaks live.
-    assets: s.assets && { ...s.assets, audio: undefined },
+    // This show's own world: its images and clips, or none (procedural previs) — never another
+    // show's art. Pre-rendered lines were spoken in the original cast's voices; the new cast speaks live.
+    assets: s.assets?.byShow?.[target] && { ...s.assets.byShow[target] },
   })
 
   const recast: Episode = {

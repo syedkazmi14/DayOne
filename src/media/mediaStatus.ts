@@ -10,7 +10,8 @@
 
 export interface MediaHealth {
   video: { configured: boolean; provider: string; model: string }
-  image: { configured: boolean; provider: string; model: string }
+  /** `characters`: the image model takes character portraits as references. */
+  image: { configured: boolean; provider: string; model: string; characters?: boolean }
   audio: { configured: boolean; provider: string }
   /** Whether uploaded documents and extracted knowledge persist across a reload. */
   content: { configured: boolean; kind: string; episodes?: boolean }

@@ -162,6 +162,7 @@ export function ScenePlayer() {
               onAdvance={advance}
               voiceOn={voiceOn}
               audio={scene.assets?.audio?.[state.dialogueIndex]}
+              inScene={!!scene.assets?.background?.characters?.includes(scene.dialogue[state.dialogueIndex]?.characterId ?? '')}
             />
           )}
 

@@ -1,5 +1,7 @@
 import type { AssetRef, Episode, Scene, SceneAssets } from '@/types'
-import { backgroundPrompt, keyframePrompt } from './image'
+import { getCharacter } from '@/content/characters'
+import { recastEpisode } from '@/engine/recast'
+import { backgroundPrompt, keyframePrompt, stillPrompt } from './image'
 import { motionPrompt } from './video'
 
 /* ============================================================================
@@ -30,11 +32,23 @@ export interface AssetPlanItem {
   reason: string
   lineIndex?: number
   characterId?: string
+  /** The frame a clip animates, as opposed to a dialogue background. */
+  keyframe?: boolean
+  /** The show whose world this asset is rendered in. Absent: unscoped. */
+  groupId?: string
+  /** Characters drawn into a still, whose portraits go to the image model as references. */
+  characters?: string[]
+  /** The same still without its cast, for a model that cannot (or will not) draw the characters. */
+  fallbackPrompt?: string
 }
 
 export const DEFAULT_MAX_CLIPS = 4
+/** Per show, every scene is a still; only the cold open and the incident move. */
+export const CLIPS_PER_SHOW = 2
 
-export function planEpisodeAssets(ep: Episode, opts: { maxClips?: number } = {}): AssetPlanItem[] {
+/** With `groupId`, the plan is that show's instead — see planShowStills. */
+export function planEpisodeAssets(ep: Episode, opts: { maxClips?: number; groupId?: string } = {}): AssetPlanItem[] {
+  if (opts.groupId) return planShowStills(ep, opts.groupId, opts.maxClips ?? CLIPS_PER_SHOW)
   const max = opts.maxClips ?? DEFAULT_MAX_CLIPS
   // Adaptive gates are routing, not scenes anyone sees.
   const scenes = Object.values(ep.scenes).filter((s) => !s.variants?.length)
@@ -57,6 +71,7 @@ export function planEpisodeAssets(ep: Episode, opts: { maxClips?: number } = {})
       sceneIds: [s.id],
       prompt: keyframePrompt(s),
       reason: 'keyframe · the image the clip animates',
+      keyframe: true,
     },
     {
       key: `video:${s.id}`,
@@ -107,14 +122,79 @@ export function planEpisodeAssets(ep: Episode, opts: { maxClips?: number } = {})
   return items
 }
 
-/** Attach a finished asset to every scene the plan item covers. Never mutates. */
+/**
+ * One show's version of the episode, as pictures: a still for every scene, set
+ * in the show's world and drawn with the characters who speak in it (their
+ * portraits go to the image model as references). The cold open and the
+ * incident are also animated from their stills. Speakers come from the recast,
+ * so each show's stills show its own cast. No audio: the recast cast speaks live.
+ */
+function planShowStills(ep: Episode, show: string, maxClips: number): AssetPlanItem[] {
+  const view = recastEpisode(ep, show)
+  const scenes = Object.values(view.scenes).filter((s) => !s.variants?.length)
+  const rank = (s: Scene) => (s.id === ep.entrySceneId ? 0 : s.outcome?.tone === 'bad' ? 1 : s.kind === 'ending' ? 2 : 3)
+  const animated = new Set(
+    scenes
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => presentationOf(s) === 'clip')
+      .sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i)
+      .slice(0, maxClips)
+      .map(({ s }) => s.id),
+  )
+  return scenes.flatMap((s): AssetPlanItem[] => {
+    const opening = s.id === ep.entrySceneId
+    const cast = [...new Set(s.dialogue.map((d) => d.characterId).filter((id) => id !== 'you'))].slice(0, 4)
+    const moves = animated.has(s.id)
+    const still: AssetPlanItem = {
+      key: `image:${show}:still:${s.id}`,
+      kind: 'image',
+      sceneId: s.id,
+      sceneIds: [s.id],
+      groupId: show,
+      keyframe: moves,
+      characters: cast,
+      prompt: stillPrompt(s, show, cast.map(getCharacter), opening),
+      fallbackPrompt: stillPrompt(s, show, [], opening),
+      reason: moves ? 'still · animated into a clip' : cast.length ? 'still · with the cast' : 'still · the setting',
+    }
+    if (!moves) return [still]
+    return [
+      still,
+      {
+        key: `video:${show}:${s.id}`,
+        kind: 'video',
+        sceneId: s.id,
+        sceneIds: [s.id],
+        groupId: show,
+        prompt: motionPrompt(s.shot, { groupId: show, opening }),
+        reason: opening ? 'cold open' : 'incident beat',
+      },
+    ]
+  })
+}
+
+/** A scene's visuals as `groupId`'s show sees them: its own set, or the episode's for the show it was written in. */
+export function visualsFor(ep: Episode, sceneId: string, groupId?: string): SceneAssets | undefined {
+  const assets = ep.scenes[sceneId]?.assets
+  return groupId && groupId !== ep.groupId ? assets?.byShow?.[groupId] : assets
+}
+
+/**
+ * Attach a finished asset to every scene the plan item covers. Never mutates.
+ * The episode's own show keeps the top-level slots; other shows' visuals go to
+ * `byShow`, so recasting can hand each show its own world.
+ */
 export function attachAsset(ep: Episode, item: AssetPlanItem, ref: AssetRef): Episode {
   const scenes = { ...ep.scenes }
   for (const id of item.sceneIds) {
     const s = scenes[id]
     if (!s) continue
     const a: SceneAssets = { ...(s.assets ?? {}) }
-    if (item.kind === 'video') a.video = ref
+    const other = item.groupId && item.groupId !== ep.groupId ? item.groupId : null
+    if (other && item.kind !== 'audio') {
+      const prev = a.byShow?.[other] ?? {}
+      a.byShow = { ...(a.byShow ?? {}), [other]: item.kind === 'video' ? { ...prev, video: ref } : { ...prev, background: ref } }
+    } else if (item.kind === 'video') a.video = ref
     else if (item.kind === 'image') a.background = ref
     else a.audio = { ...(a.audio ?? {}), [item.lineIndex!]: ref }
     scenes[id] = { ...s, assets: a }

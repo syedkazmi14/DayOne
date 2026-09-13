@@ -194,6 +194,8 @@ export interface AssetRef {
   prompt?: string
   /** Object-store key: company/episodes/<episode>/videos/<scene>.mp4 */
   storageKey?: string
+  /** Characters drawn into this image (from their portraits) — the player shows no portrait on top of them. */
+  characters?: string[]
   createdAt: string
 }
 
@@ -202,6 +204,17 @@ export interface SceneAssets {
   background?: AssetRef
   /** Pre-rendered voice per dialogue line index. */
   audio?: Record<number, AssetRef>
+  /**
+   * This scene's visuals in each other show's world, keyed by show id. The
+   * top-level video/background belong to the show the episode was written for;
+   * recasting to another show plays that show's set instead.
+   */
+  byShow?: Record<string, ShowVisuals>
+}
+
+export interface ShowVisuals {
+  video?: AssetRef
+  background?: AssetRef
 }
 
 /** What shape of risk a decision presents. Drives run telemetry, not branching. */

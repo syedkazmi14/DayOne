@@ -438,7 +438,7 @@ ok(await waitFor(() => has('runtime voice'), 8000), 'voice pass reports runtime 
 await click('generate cinematic video')
 ok(await waitFor(() => has('re-render cinematic video'), 8000), 'cinematic video pass completed')
 ok(
-  [...document.querySelectorAll('[data-asset-row^="video:"]')].length === 4 &&
+  [...document.querySelectorAll('[data-asset-row^="video:"]')].length === 2 &&
     [...document.querySelectorAll('[data-asset-row^="video:"]')].every((r) => (r.textContent ?? '').includes('procedural previs')),
   'no video key: all four clips are procedural previs, none claims to be AI video',
 )

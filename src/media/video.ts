@@ -1,4 +1,5 @@
 import type { AssetRef, AssetTier, ShotSpec } from '@/types'
+import { showWorld } from '@/content/showWorlds'
 import { MEDIA_BASE, mediaHealth } from './mediaStatus'
 
 /* ============================================================================
@@ -35,6 +36,10 @@ export interface ClipRequest {
   image?: AssetRef
   /** Render again even if this scene's clip is already in storage. */
   force?: boolean
+  /** The show whose world this clip belongs to; stored under that show. */
+  showId?: string
+  /** The episode's cold open — animated as the world's establishing shot. */
+  opening?: boolean
 }
 
 export interface ClipJob {
@@ -103,14 +108,17 @@ export const clipSeconds = (shot: ShotSpec) => Math.min(8, Math.max(5, shot.dura
  * one shot of an existing image; it never describes what happens next in the
  * story.
  */
-export function motionPrompt(shot: ShotSpec): string {
+export function motionPrompt(shot: ShotSpec, world: { groupId?: string | null; opening?: boolean } = {}): string {
+  const w = showWorld(world.groupId)
+  const establishing = !!w && !!world.opening
+  const action = establishing ? w!.coldOpen.action : (shot.action ?? firstSentence(shot.prompt))
   return [
     `${cap(clause(shot.camera ?? CAMERA_BY_MOOD[shot.mood]))}.`,
-    `${cap(clause(shot.action ?? firstSentence(shot.prompt)))}.`,
-    `${cap(EXPRESSION_BY_MOOD[shot.mood])}.`,
-    `In the background, ${ENVIRONMENT_MOTION[shot.env]}.`,
-    `Cinematic framing, ${clipSeconds(shot)}-second shot, smooth natural motion.`,
-    'Maintain the original composition, lighting and character design from the first frame. No text, no captions, no scene cuts.',
+    `${cap(clause(action))}.`,
+    ...(establishing ? [] : [`${cap(EXPRESSION_BY_MOOD[shot.mood])}.`]),
+    w ? 'Background motion stays subtle and belongs to the setting.' : `In the background, ${ENVIRONMENT_MOTION[shot.env]}.`,
+    `${w ? 'Animated' : 'Cinematic'} framing, ${clipSeconds(shot)}-second shot, smooth natural motion.`,
+    `Maintain the original composition, ${w ? 'art style' : 'lighting'} and character design from the first frame. No text, no captions, no scene cuts.`,
   ].join(' ')
 }
 
@@ -133,7 +141,7 @@ export class ProceduralPrevisProvider implements VideoProvider {
       status: 'ready',
       provider: this.id,
       tier: this.tier,
-      prompt: motionPrompt(req.shot),
+      prompt: motionPrompt(req.shot, { groupId: req.showId, opening: req.opening }),
     }
     this.jobs.set(job.id, job)
     return job
@@ -183,7 +191,7 @@ export class ServerVideoProvider implements VideoProvider {
   }
 
   async generateClip(req: ClipRequest): Promise<ClipJob> {
-    const prompt = motionPrompt(req.shot)
+    const prompt = motionPrompt(req.shot, { groupId: req.showId, opening: req.opening })
     const failed = (error: string): ClipJob => ({
       id: `failed-${req.episodeId}-${req.sceneId}`,
       episodeId: req.episodeId,
@@ -208,6 +216,7 @@ export class ServerVideoProvider implements VideoProvider {
           imageKey: req.image.storageKey,
           durationSec: clipSeconds(req.shot),
           force: req.force === true,
+          showId: req.showId,
         }),
       })
       const body = (await res.json().catch(() => ({}))) as Partial<ClipJob> & { jobId?: string; message?: string }
@@ -281,7 +290,7 @@ export function videoProvider(): VideoProvider {
  */
 export function requestClip(
   shot: ShotSpec,
-  ctx: { episodeId: string; sceneId: string; image?: AssetRef; force?: boolean },
+  ctx: { episodeId: string; sceneId: string; image?: AssetRef; force?: boolean; showId?: string; opening?: boolean },
   provider: VideoProvider = videoProvider(),
 ): Promise<ClipJob> {
   return provider.generateClip({ ...ctx, shot })

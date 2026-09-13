@@ -225,6 +225,21 @@ SceneCanvas:  AI clip  ->  AI background/keyframe  ->  procedural previs
   nothing; a missing file falls back a tier instead of a black frame.
 - **Audio is not video.** ElevenLabs voices the cast; it does not generate
   scenes.
+- **One world per show.** Each show renders its own images and clips
+  (`src/content/showWorlds.ts`): the same scene is a space-station office for
+  one show and a power plant for another, and each cold open is that world's
+  establishing shot. Assets are stored per show
+  (`company/episodes/<id>/<show>/…`) and on the scene under `assets.byShow`;
+  recasting plays that show's set, or procedural previs if it has none — never
+  another show's art.
+- **Stills with the real characters.** Per show, every scene is a still
+  (Gemini `gemini-3.1-flash-image`, `GEMINI_API_KEY`): the characters who speak
+  in the scene — that show's cast, from the recast — are drawn in, with their
+  portraits from `public/characters` sent as reference images. Only the cold
+  open and the incident are animated (Replicate, from the still). If Gemini
+  declines a character image, that still falls back to the setting and the
+  portrait goes on top; the player hides a portrait whenever the still already
+  draws that character.
 
 ### Content persistence
 

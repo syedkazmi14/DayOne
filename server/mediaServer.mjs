@@ -40,6 +40,11 @@
  *   REPLICATE_API_TOKEN    enables scene images + video (Replicate)
  *   REPLICATE_VIDEO_MODEL  default wan-video/wan-2.2-i2v-fast
  *   REPLICATE_IMAGE_MODEL  default black-forest-labs/flux-schnell
+ *   GEMINI_API_KEY         enables per-scene stills from Gemini, drawn with the
+ *                          characters' portraits as references (clips stay on Replicate)
+ *   GEMINI_IMAGE_MODEL     default gemini-3.1-flash-image
+ *   GEMINI_IMAGE_SIZE      default 1K (512px is cheaper, softer)
+ *   GEMINI_API_BASE        default https://generativelanguage.googleapis.com/v1beta
  *   REPLICATE_API_BASE     default https://api.replicate.com/v1 (tests point
  *                          this at a fake Replicate server)
  *   VOICE_PROXY_URL        default http://localhost:$VOICE_PROXY_PORT (8787);
@@ -54,8 +59,9 @@
  *
  * ROUTES
  *   GET  /api/media/health
- *   POST /api/media/image        { episodeId, sceneId, prompt } -> { url, storageKey }
- *   POST /api/media/video        { episodeId, sceneId, prompt, imageKey, durationSec? } -> { jobId, status }
+ *   POST /api/media/image        { episodeId, sceneId, prompt, showId?, force? } -> { url, storageKey, reused? }
+ *   POST /api/media/video        { episodeId, sceneId, prompt, imageKey, durationSec?, showId?, force? } -> { jobId, status }
+ *                                showId scopes the asset to one show's world: company/episodes/<ep>/<show>/…
  *   GET  /api/media/video/:jobId -> { status: queued|rendering|ready|failed, url?, storageKey?, error? }
  *   POST /api/media/audio        { episodeId, sceneId, lineIndex, text, voiceId, fallbackVoiceId?, settings? }
  *   POST /api/media/knowledge    { docId, text } -> { url, storageKey }
@@ -95,13 +101,21 @@ const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').replace(/\/$/, '')
 const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY ?? ''
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET ?? 'dayone-assets'
 const SUPABASE_PRIVATE_BUCKET = process.env.SUPABASE_PRIVATE_BUCKET ?? 'dayone-private'
+const GEMINI_KEY = process.env.GEMINI_API_KEY ?? ''
+const GEMINI = (process.env.GEMINI_API_BASE ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '')
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3.1-flash-image'
+const GEMINI_IMAGE_SIZE = process.env.GEMINI_IMAGE_SIZE ?? '1K'
+/** Character portraits the app already ships; stills reference them by character id. */
+const PORTRAITS = path.join(ROOT, 'public', 'characters')
+const CHARACTER_ID = /^[a-z][a-z0-9-]{0,40}$/
+const MAX_REFERENCES = 4
 
 const PUBLIC_PREFIX = '/api/media/assets/'
 const UPSTREAM_TIMEOUT_MS = 90_000
 const IMAGE_WAIT_MS = 120_000
 const MAX_BODY = 2 * 1024 * 1024
-/** Replicate accepts data URLs for small files; keyframes are ~200 KB jpgs. */
-const MAX_KEYFRAME_BYTES = 1_000_000
+/** Local storage has no public URL, so a keyframe goes to Replicate inline; a 1K still can be a few MB. */
+const MAX_KEYFRAME_BYTES = 8_000_000
 /** Wan 2.2 renders at 16 fps; 81 frames (~5 s) is its sweet spot, 121 its max. */
 const WAN_FPS = 16
 
@@ -163,16 +177,19 @@ const readJson = (req) =>
 /** Ids become path segments, so they are allow-listed, never escaped. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,80}$/
 const safeId = (v) => (typeof v === 'string' && SAFE_ID.test(v) ? v : null)
+/** Optional show scope for per-show assets: absent is fine, present must be a safe id. */
+const showScope = (v) => (v === undefined || v === null || v === '' ? { ok: true, show: null } : safeId(v) ? { ok: true, show: v } : { ok: false })
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 /** A keyframe must be a scene image this server stored — never an arbitrary path. */
-const KEYFRAME_KEY = /^company\/episodes\/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\/backgrounds\/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\.(jpg|jpeg|png|webp)$/
+const KEYFRAME_KEY = /^company\/episodes\/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\/(?:[A-Za-z0-9][A-Za-z0-9_-]{0,80}\/)?backgrounds\/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\.(jpg|jpeg|png|webp)$/
 
 /* ---------------------------------------------------------------- storage */
 
 const keys = {
   knowledge: (doc) => `company/knowledge/${doc}.txt`,
-  image: (ep, scene) => `company/episodes/${ep}/backgrounds/${scene}.jpg`,
-  video: (ep, scene) => `company/episodes/${ep}/videos/${scene}.mp4`,
+  // A show id scopes the asset to that show's world: company/episodes/<ep>/<show>/…
+  image: (ep, scene, show, ext = 'jpg') => `company/episodes/${ep}/${show ? `${show}/` : ''}backgrounds/${scene}.${ext}`,
+  video: (ep, scene, show) => `company/episodes/${ep}/${show ? `${show}/` : ''}videos/${scene}.mp4`,
   audio: (ep, scene, i) => `company/episodes/${ep}/audio/${scene}-${i}.mp3`,
 }
 
@@ -244,6 +261,16 @@ async function existingObject(key) {
   }
   const file = inRoot(key)
   return file && (await stat(file).catch(() => null)) ? `${PUBLIC_PREFIX}${key}` : null
+}
+
+/** A stored still in whichever format its provider returned (Gemini PNG, FLUX JPEG). */
+async function existingImage(ep, scene, show) {
+  for (const ext of ['png', 'jpg', 'webp']) {
+    const key = keys.image(ep, scene, show, ext)
+    const url = await existingObject(key)
+    if (url) return { url, key }
+  }
+  return null
 }
 
 /** Delete a stored object. One that is already gone is not an error. */
@@ -458,6 +485,74 @@ async function voiceConfigured() {
   }
 }
 
+/* ----------------------------------------------------------- gemini stills */
+
+const sniffImage = (buf) =>
+  buf[0] === 0x89 && buf[1] === 0x50
+    ? 'image/png'
+    : buf[0] === 0xff && buf[1] === 0xd8
+      ? 'image/jpeg'
+      : buf.subarray(8, 12).toString('ascii') === 'WEBP'
+        ? 'image/webp'
+        : null
+
+/** A character's portrait from the app's own art, by id — never an arbitrary path. */
+async function loadPortrait(id) {
+  if (typeof id !== 'string' || !CHARACTER_ID.test(id)) return null
+  const bytes = await readFile(path.join(PORTRAITS, `${id}.jpg`)).catch(() => null)
+  const mime = bytes && sniffImage(bytes)
+  return mime ? { mime, data: bytes.toString('base64') } : null
+}
+
+const retryDelaySeconds = (res, body) => {
+  const info = body?.error?.details?.find((d) => typeof d?.retryDelay === 'string')
+  const s = info ? parseFloat(info.retryDelay) : Number(res.headers.get('retry-after'))
+  return Number.isFinite(s) && s > 0 ? s : 10
+}
+
+/**
+ * One still from Gemini: the prompt, then each character's portrait as a
+ * reference image. Returns the image bytes, or { refused } with Gemini's reason
+ * when it declines — a refusal is an answer the Studio acts on, not an error.
+ */
+async function generateStill(prompt, portraits) {
+  const payload = {
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }, ...portraits.map((p) => ({ inline_data: { mime_type: p.mime, data: p.data } }))],
+      },
+    ],
+    generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '16:9', imageSize: GEMINI_IMAGE_SIZE } },
+  }
+  for (let attempt = 0; ; attempt++) {
+    const res = await upstream(
+      `${GEMINI}/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+      { method: 'POST', headers: { 'x-goog-api-key': GEMINI_KEY, 'content-type': 'application/json' }, body: JSON.stringify(payload) },
+      IMAGE_WAIT_MS,
+    )
+    const body = await res.json().catch(() => ({}))
+    // A 429 is worth waiting out only when it is a rate limit: an exhausted prepay balance or a daily quota will not clear in seconds.
+    const unrecoverable = /prepayment|credits are depleted|billing|per day/i.test(String(body?.error?.message ?? ''))
+    if ((res.status === 429 || res.status === 503) && !unrecoverable && attempt < MAX_THROTTLE_RETRIES) {
+      const seconds = retryDelaySeconds(res, body)
+      console.warn(`[media] Gemini ${res.status} — retrying in ${seconds}s`)
+      await sleep(Math.max(0.1, seconds) * 1000)
+      continue
+    }
+    if (!res.ok)
+      throw new Error(`Gemini rejected the request (${res.status})${body?.error?.message ? `: ${String(body.error.message).slice(0, 200)}` : ''}`)
+    const candidate = body.candidates?.[0]
+    const parts = candidate?.content?.parts ?? []
+    const image = parts.map((p) => p.inlineData ?? p.inline_data).find((d) => d?.data)
+    if (!image) {
+      const note = parts.map((p) => p.text).filter(Boolean).join(' ').slice(0, 160)
+      return { refused: body.promptFeedback?.blockReason ?? candidate?.finishReason ?? 'NO_IMAGE', note }
+    }
+    return { mime: image.mimeType ?? image.mime_type ?? 'image/png', bytes: Buffer.from(image.data, 'base64') }
+  }
+}
+
 /* -------------------------------------------------------------- video jobs */
 
 /** jobId -> { status, predictionId, episodeId, sceneId, url?, storageKey?, error?, finishing, misses } */
@@ -484,7 +579,7 @@ async function advanceVideoJob(job) {
     try {
       const url = outputUrl(prediction.output)
       if (!url) throw new Error('Replicate returned no video')
-      job.storageKey = keys.video(job.episodeId, job.sceneId)
+      job.storageKey = keys.video(job.episodeId, job.sceneId, job.showId)
       job.url = await putObject(job.storageKey, await download(url))
       job.status = 'ready'
     } catch (e) {
@@ -519,7 +614,9 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/media/health')
       return json(res, 200, {
         video: { configured: !!TOKEN, provider: 'replicate', model: VIDEO_MODEL, mode: 'image-to-video' },
-        image: { configured: !!TOKEN, provider: 'replicate', model: IMAGE_MODEL },
+        image: GEMINI_KEY
+          ? { configured: true, provider: 'gemini', model: GEMINI_IMAGE_MODEL, characters: true }
+          : { configured: !!TOKEN, provider: 'replicate', model: IMAGE_MODEL },
         audio: { configured: await voiceConfigured(), provider: 'elevenlabs via voice proxy' },
         // Content persistence needs no generation token: Supabase when it is
         // configured, the local SQLite file otherwise — so it is available
@@ -614,14 +711,31 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/media/image') {
-      if (!TOKEN) return notConfigured(res)
+      if (!TOKEN && !GEMINI_KEY) return notConfigured(res)
       const episodeId = safeId(body.episodeId)
       const sceneId = safeId(body.sceneId)
       const prompt = str(body.prompt, 2000)
       if (!episodeId || !sceneId || !prompt) return json(res, 400, { error: 'invalid_request' })
-      const storageKey = keys.image(episodeId, sceneId)
-      const existing = body.force === true ? null : await existingObject(storageKey)
-      if (existing) return json(res, 200, { url: existing, storageKey, reused: true })
+      const scope = showScope(body.showId)
+      if (!scope.ok) return json(res, 400, { error: 'invalid_request' })
+      const references = Array.isArray(body.references) ? body.references : []
+      if (references.length > MAX_REFERENCES)
+        return json(res, 400, { error: 'invalid_request', message: `At most ${MAX_REFERENCES} character references.` })
+      const portraits = await Promise.all(references.map(loadPortrait))
+      if (portraits.some((p) => !p)) return json(res, 400, { error: 'unknown_character', message: 'A referenced character has no portrait.' })
+      const existing = body.force === true ? null : await existingImage(episodeId, sceneId, scope.show)
+      if (existing) return json(res, 200, { url: existing.url, storageKey: existing.key, reused: true })
+
+      if (GEMINI_KEY) {
+        const still = await generateStill(prompt, portraits)
+        if (still.refused)
+          return json(res, 422, { error: 'refused', message: `Gemini declined this image (${still.refused})${still.note ? `: ${still.note}` : ''}` })
+        const ext = still.mime.includes('png') ? 'png' : still.mime.includes('webp') ? 'webp' : 'jpg'
+        const stillKey = keys.image(episodeId, sceneId, scope.show, ext)
+        return json(res, 200, { url: await putObject(stillKey, still.bytes), storageKey: stillKey, provider: 'gemini', characters: references })
+      }
+
+      const storageKey = keys.image(episodeId, sceneId, scope.show)
       // No synchronous wait: creation is serialised, so waiting inside the queue
       // held every other scene back until this one finished (~1 image a minute).
       let prediction = await createPrediction(IMAGE_MODEL, {
@@ -652,23 +766,31 @@ const server = createServer(async (req, res) => {
       const prompt = str(body.prompt, 2000)
       if (!episodeId || !sceneId || !prompt) return json(res, 400, { error: 'invalid_request' })
       // A clip already in storage is reused: a re-render is a paid prediction, so it has to be asked for.
-      const videoKey = keys.video(episodeId, sceneId)
+      const scope = showScope(body.showId)
+      if (!scope.ok) return json(res, 400, { error: 'invalid_request' })
+      const videoKey = keys.video(episodeId, sceneId, scope.show)
       const existing = body.force === true ? null : await existingObject(videoKey)
       if (existing) {
         const id = randomUUID()
-        const job = { status: 'ready', url: existing, storageKey: videoKey, episodeId, sceneId, finishing: false, misses: 0, reused: true }
+        const job = { status: 'ready', url: existing, storageKey: videoKey, episodeId, sceneId, showId: scope.show, finishing: false, misses: 0, reused: true }
         jobs.set(id, job)
         return json(res, 202, publicJob(id, job))
       }
       const imageKey = typeof body.imageKey === 'string' && KEYFRAME_KEY.test(body.imageKey) ? body.imageKey : null
       if (!imageKey)
         return json(res, 400, { error: 'image_required', message: 'Wan 2.2 I2V animates a stored scene image — generate the scene image first.' })
-      const bytes = await getObject(imageKey)
-      if (!bytes) return json(res, 404, { error: 'image_missing', message: 'The scene image is not in storage.' })
-      if (bytes.length > MAX_KEYFRAME_BYTES) return json(res, 413, { error: 'image_too_large', message: 'Scene image exceeds 1 MB.' })
+      // A public bucket URL is fetched by Replicate directly (a 1K still is too big to inline);
+      // local storage has no public URL, so the bytes go inline.
+      let image = supabase ? await existingObject(imageKey) : null
+      if (!supabase) {
+        const bytes = await getObject(imageKey)
+        if (bytes && bytes.length > MAX_KEYFRAME_BYTES) return json(res, 413, { error: 'image_too_large', message: 'Scene image exceeds 8 MB.' })
+        image = bytes && `data:${mimeOf(imageKey)};base64,${bytes.toString('base64')}`
+      }
+      if (!image) return json(res, 404, { error: 'image_missing', message: 'The scene image is not in storage.' })
       const durationSec = clamp(Number(body.durationSec) || 5, 5, 7.5)
       const prediction = await createPrediction(VIDEO_MODEL, {
-        image: `data:${mimeOf(imageKey)};base64,${bytes.toString('base64')}`,
+        image,
         prompt,
         num_frames: clamp(Math.round(durationSec * WAN_FPS) + 1, 81, 121),
         frames_per_second: WAN_FPS,
@@ -676,7 +798,7 @@ const server = createServer(async (req, res) => {
         go_fast: true,
       })
       const id = randomUUID()
-      const job = { status: 'queued', predictionId: prediction.id, episodeId, sceneId, finishing: false, misses: 0 }
+      const job = { status: 'queued', predictionId: prediction.id, episodeId, sceneId, showId: scope.show, finishing: false, misses: 0 }
       jobs.set(id, job)
       if (TERMINAL.has(prediction.status)) await advanceVideoJob(job)
       return json(res, 202, publicJob(id, job))
@@ -705,7 +827,7 @@ const server = createServer(async (req, res) => {
     const message = String(e?.message ?? e)
     console.warn(`[media] ${req.method} ${p} failed: ${message.slice(0, 240)}`)
     if (message === 'invalid json') return json(res, 400, { error: 'invalid_json' })
-    return json(res, 502, { error: 'upstream_failed', message: /^(Replicate|Supabase)/.test(message) ? message : 'Asset generation failed upstream.' })
+    return json(res, 502, { error: 'upstream_failed', message: /^(Replicate|Supabase|Gemini)/.test(message) ? message : 'Asset generation failed upstream.' })
   }
 })
 
@@ -713,6 +835,7 @@ server.listen(PORT, () => {
   console.log(
     `[media] server on http://localhost:${PORT}  ` +
       (TOKEN ? `replicate configured · video ${VIDEO_MODEL} (image-to-video) · image ${IMAGE_MODEL}` : 'REPLICATE_API_TOKEN not set — Studio will use procedural previs') +
+      (GEMINI_KEY ? `  · stills gemini ${GEMINI_IMAGE_MODEL} ${GEMINI_IMAGE_SIZE} (with character references)` : '') +
       (supabase
         ? `  · storage + content: supabase (${new URL(SUPABASE_URL).host}, bucket ${SUPABASE_BUCKET})`
         : `  · storage ${path.relative(ROOT, ASSET_ROOT) || '.'}/  · content ${path.relative(ROOT, CONTENT_DB_PATH)}`),
