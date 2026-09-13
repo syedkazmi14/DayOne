@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { characterGroups } from '@/content/characterGroups'
-import { playableCount } from '@/content/episodes'
 import { useGame, type View } from '@/engine/gameStore'
 import { FilmOverlay } from './ui/Grain'
 import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
@@ -21,11 +20,13 @@ import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
 
 /* No 'Profile' entry: the avatar at the right of the header is the profile
  * affordance, and two controls for one destination is noise. */
-const NAV: { view: View; label: string }[] = [
+/* Employees play; admins build. An admin has no show and no lobby, so the
+ * Studio is their only destination — and employees never see it. */
+const NAV_EMPLOYEE: { view: View; label: string }[] = [
   { view: 'home', label: 'Episodes' },
   { view: 'shop', label: 'Shop' },
-  { view: 'authoring', label: 'Studio' },
 ]
+const NAV_ADMIN: { view: View; label: string }[] = [{ view: 'authoring', label: 'Studio' }]
 
 /** Matches App.tsx's screen transition, so chrome and content move together. */
 const CHROME_FADE = { duration: 0.42, ease: [0.16, 1, 0.3, 1] } as const
@@ -33,6 +34,8 @@ const FADE = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { state, dispatch, group } = useGame()
+  const isAdmin = state.session?.role === 'admin'
+  const NAV = isAdmin ? NAV_ADMIN : NAV_EMPLOYEE
   /* The cinematic screens carry their own chrome — a second header would
    * collide with their own back button and break the full-bleed frame. Sign-in
    * and the show picker have no chrome at all: offering Episodes / Shop /
@@ -167,6 +170,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       * preference rather than a destination, which is what puts
                       * it here rather than in the nav. Chosen once at
                       * onboarding; this is where it gets changed. */}
+                    {/* Admins have no show to change. */}
+                    {!isAdmin && (
+                    <>
                     <div
                       className="relative"
                       onMouseEnter={() => setShowsOpen(true)}
@@ -219,11 +225,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                                     }}
                                   />
                                   <span className={active ? 'text-bone' : 'text-bone-dim'}>{g.name}</span>
-                                  {playableCount(g.id) === 0 && (
-                                    <span className="ml-auto shrink-0 font-sans text-[11px] text-bone-faint">
-                                      In production
-                                    </span>
-                                  )}
                                 </button>
                               )
                             })}
@@ -233,6 +234,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </div>
 
                     <div role="separator" className="my-1 h-px bg-bone/10" />
+                    </>
+                    )}
 
                     <button
                       role="menuitem"

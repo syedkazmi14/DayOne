@@ -31,11 +31,14 @@ npm run dev                                      # Vite + voice proxy + media se
 
 ## The demo path
 
-1. **Episode lobby** — the featured episode as a full-bleed hero, the cast
-   switcher in its corner, and the episode shelf underneath. The arrows move
-   between rosters (Rick and Morty → South Park → Family Guy → The Simpsons);
-   the hero and the shelf both follow. Clicking a portrait selects that
-   character and previews their voice.
+0. **Sign in** — a mode picker, not real auth. **Employees** pick a show and
+   play; **admins** skip the show and land in the Studio, the only place
+   episodes are built and published.
+1. **Episode lobby** — every show plays the **same lineup** (First Day plus
+   every topic the admin has published). The show only decides the cast:
+   Rick and Morty play First Day as hand-written, and the other shows get it
+   recast with their own characters. Clicking a portrait previews that
+   character's voice.
 2. **Featured episode** — `FIRST DAY · Episode 01 · Cybersecurity`
 3. **Episode intro** — cast, concepts, and a note saying which act has already
    been personalised for you
@@ -52,11 +55,13 @@ npm run dev                                      # Vite + voice proxy + media se
 9. **Adaptive act three** — built around your weakest demonstrated concept
 10. **Results + AI coach** — accuracy on external threats vs coworker requests,
     decision speed under authority pressure, bet calibration, the single biggest
-    weakness — then **generate my next episode**, built from that weakness
+    weakness — then a **recommended episode** from the admin's published library
+    that targets that weakness (employees never generate episodes)
 11. **Profile** — mastery scores that actually drive 9 and 10
-12. **Studio** — company material → topic → a generated, validated episode
-    graph → clips, backgrounds and voices → two employees' act threes side by
-    side → publish → play it
+12. **Studio** (admins only) — company material → topic → a generated,
+    validated episode graph → clips, backgrounds and voices → two employees'
+    act threes side by side → preview in any show → publish, and it goes live
+    in every show's lineup
 
 `npm run verify` clicks through all of it headlessly (see *Verification*).
 
@@ -229,20 +234,36 @@ point of *company-specific* onboarding is that it outlasts one browser tab.
 
 `src/data/contentStore.ts` is the seam: a `ContentStore` interface with a
 `static` tier (the shipped demo corpus, read-only, always available) and a
-`db` tier. `server/mediaServer.mjs` backs `db` with a small SQLite database
-(`data/content.db`, via `node:sqlite` — built into Node 22.5+, no dependency
-and no external account) behind `/api/media/content/{docs,knowledge}`. The
-Studio switches to it automatically the moment the media server's health
-check answers, the same discovery `src/media/mediaStatus.ts` already does for
-video, image and audio — no separate flag.
+`db` tier behind `/api/media/content/{docs,knowledge}`. The Studio switches to
+it automatically the moment the media server's health check answers — no
+separate flag.
 
-Without the media server running, uploads and extracted rules still work for
-that session; they simply do not survive a reload, exactly as before this was
-added. The Studio's status row says which tier is active.
+**Supabase (shared).** With `SUPABASE_URL` and `SUPABASE_SECRET_KEY` set on the
+media server, everything an admin builds is shared across browsers:
 
-This is the same local-first shape as video/image/audio storage: a real
-database, zero cloud account, upgradeable later (a hosted Postgres, a
-per-company schema) without the app above this seam knowing the difference.
+| What | Where |
+|---|---|
+| Published + draft episodes | Postgres `public.episodes` (`/api/media/episodes`) |
+| Uploaded docs, extracted knowledge | Postgres `public.source_docs`, `public.knowledge_items` |
+| Scene images, clips, dialogue audio | public bucket `dayone-assets`, `company/episodes/<id>/…` |
+| Extracted policy text | private bucket `dayone-private` |
+
+The tables have RLS on and no policies, so only the secret key (held by the
+media server alone) can read or write them; the browser gets rows and public
+asset URLs, never the key. On load the app pulls the library into the
+reducer through `HYDRATE_PUBLISHED`, which re-validates every graph, and an
+admin's publish / unpublish is mirrored back (`src/data/episodeStore.ts`).
+Employee progress stays in the browser.
+
+**Reuse.** Asking for a scene image or clip that is already in storage returns
+the stored file without calling Replicate. The Studio's *re-render* buttons
+send `force: true` to pay for a new one.
+
+**Local fallback.** Without Supabase the same routes use `./storage` and a
+SQLite file (`data/content.db`, via `node:sqlite`) — shared by nobody but this
+machine. Without the media server at all, uploads live for the session and
+published episodes in `localStorage`. The Studio's status row says which tier
+is active.
 
 ---
 
@@ -295,6 +316,35 @@ Kyle, Kenny) · **Family Guy** (Peter, Stewie, Brian, Lois) · **The Simpsons**
 > Every character records `casting.assetSource: 'community_wiki'`, so a customer
 > swaps in licensed or self-recorded portraits and voice ids at the asset layer
 > without touching the episode graph.
+
+### One lineup, every show
+
+An episode is written for four **roles**, not four characters: the mentor, the
+one pushing the shortcut, the peer and the manager
+(`src/content/castRoles.ts`). Each show fills those roles from its own cast by
+speech archetype:
+
+| Role | Rick and Morty | South Park | Family Guy | The Simpsons |
+|---|---|---|---|---|
+| mentor | Summer | Kyle | Brian | Lisa |
+| pressure | Rick | Cartman | Peter | Homer |
+| peer | Morty | Stan | Stewie | Bart |
+| manager | Jerry | Kenny | Lois | Marge |
+
+`recastEpisode()` (`src/engine/recast.ts`) is a pure, memoised function of
+(episode, show):
+
+- **Changes:** lines move to the new speaker, and names in every text field
+  follow. Pronouns follow wherever a role changes gender, so Summer's "Ask her
+  anything" becomes Kyle's "Ask him anything".
+- **Never changes:** scene ids, choices, which option is strong, consequence
+  targets, citations, scoring and the adaptive act. The suite asserts the recast
+  graph is identical.
+- **The original show:** gets the original object back, which is how First Day
+  stays hand-written for Rick and Morty.
+
+Pre-rendered voice lines are dropped on recast, because they were spoken in the
+original character's voice.
 
 Characters speak through one of four `speechArchetype`s (`chaotic`, `anxious`,
 `pragmatic`, `authority`), which is what keeps sixteen characters from becoming
@@ -493,21 +543,27 @@ React 18 · TypeScript · Tailwind · Framer Motion · Lucide · Vite
   `fallbackVoiceId`; there are only four premade young-male voices for five
   young-male characters, so on Free, Cartman and Bart share one, separated only
   by pitch and pacing. Both have distinct cast voices.
-- `FIRST DAY` is the only hand-authored graph; the other eleven shelf entries
-  are stubs. Generated episodes are real graphs, but they all follow one
-  structure: cold open, two decisions, adaptive act, ending.
-- **The fal.ai path has not been exercised against the live API in this repo**
-  — no key was available. The HTTP contract follows fal's documented queue API,
-  and the client side is tested against a fake server. Treat the first real
-  render as the integration test.
+- `FIRST DAY` is the only hand-authored graph; every other episode comes from
+  the Studio. Studio episodes all follow one structure: cold open, two
+  decisions, adaptive act, ending.
+- Recast pronouns are rewritten sentence by sentence for the character a
+  sentence names, which is a heuristic. A sentence that names the mentor and
+  then says "he" about someone else can get the wrong pronoun.
+- **Replicate on a low-credit account is throttled** (6 predictions a minute,
+  burst 1). The media server queues and retries, so generating an episode's
+  images and clips takes several minutes. A real Wan 2.2 clip has been
+  generated, stored and played in Chrome. All four clips in a single run have
+  only been exercised against a fake Replicate server.
+- The sign-in screen is a mode picker, not authentication. "Admin only" is
+  enforced in the reducer for the UI, not by a server.
 - The media server keeps render jobs in memory (a restart loses in-flight
-  jobs) and stores binary assets to local disk. `putObject()` is the one
-  function an S3/R2 adapter replaces.
+  jobs; the finished files are in storage and get reused).
+- The media server's write routes (`/api/media/episodes`, content, generation)
+  are not authenticated — anyone who can reach the server can publish. Fine
+  for a local demo, not for a deployment.
 - Offline, the knowledge agent can only replay the shipped corpus. A newly
   uploaded document yields no rules without a language model, and the Studio
   says so.
-- Progression and published episodes persist to `localStorage` only.
-- **Uploaded documents and extracted knowledge persist to a local SQLite
-  database** (`server/mediaServer.mjs`, via `node:sqlite` — no dependency, no
-  account) whenever the media server is running; without it, a Studio session
-  lives in memory only, same as before. See *Content persistence* below.
+- Player progression persists to `localStorage` only. Episodes, docs,
+  knowledge and media persist to Supabase when configured, otherwise to local
+  disk + SQLite. See *Content persistence*.

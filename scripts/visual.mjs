@@ -187,6 +187,7 @@ const probe = () =>
           })()
         : null,
       portraitCount: portraits.length,
+      portraitSrcs: portraits.map((p) => p.querySelector('img')?.getAttribute('src') ?? '').join('|'),
       // An element whose content is wider than itself is clipping its own text.
       clippedCards: [...portraits, ...shelfCards]
         .map((c) => ({ w: c.clientWidth, content: c.scrollWidth }))
@@ -221,7 +222,7 @@ async function viewport(label, width, height) {
     !!m.switcher && m.switcher.left >= 0 && m.switcher.right <= width,
     `switcher sits inside the viewport (${m.switcher?.left}..${m.switcher?.right} of ${width})`,
   )
-  ok(m.cardCount === 3, `${m.cardCount} episodes on the shelf underneath`)
+  ok(m.cardCount === 1, `${m.cardCount} playable episode on the shelf underneath (First Day, before any topic is published)`)
   ok(
     m.clippedCards.length === 0,
     `nothing clips its own content${m.clippedCards.length ? ` — ${JSON.stringify(m.clippedCards)}` : ''}`,
@@ -234,7 +235,7 @@ async function viewport(label, width, height) {
   await shot(`${label}-1-hero`)
 
   // Switch show from the account menu and re-check everything that moved.
-  const before = m.shelf.join('|')
+  const before = m.portraitSrcs
   await page.click('button[aria-label*="account menu"]')
   await sleep(300)
   const opened = await page.evaluate(() => {
@@ -256,7 +257,7 @@ async function viewport(label, width, height) {
 
   ok(opened, 'the account menu offers Change show')
   ok(switched.rows === 4, `its flyout lists all four shows (got ${switched.rows})`)
-  ok(m.shelf.join('|') !== before, `episode shelf followed the show (now: ${m.shelf.join(' / ')})`)
+  ok(m.portraitSrcs !== before, `the cast followed the show — same lineup, new characters (shelf: ${m.shelf.join(' / ')})`)
   ok(!!m.groupName, `cast strip names the new show (${m.groupName})`)
   ok(m.pageOverflow <= 0, `still no horizontal overflow after switching (${m.pageOverflow}px)`)
   ok(m.portraitCount === 4, 'four portraits on the second show')
@@ -316,7 +317,7 @@ for (const [label, width, height] of [
   ok(!m.chrome, `${label}: no app chrome over the picker`)
   ok(m.overflow <= 0, `${label}: no horizontal page overflow (${m.overflow}px)`)
   ok(m.clipped === 0, `${label}: no tile clips its own content`)
-  ok(m.labelled === 3, `${label}: the three unplayable shows are labelled (got ${m.labelled})`)
+  ok(m.labelled === 0, `${label}: no show is labelled in production (got ${m.labelled})`)
   await firstRun.screenshot({ path: path.join(SHOTS, `pickshow-${label}.png`) })
 }
 await firstRun.close()

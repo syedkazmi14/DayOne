@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { concepts, conceptLabel } from '@/content/knowledge'
-import { episodes } from '@/content/episodes'
+import { lineupFor } from '@/engine/lineup'
 import { getCharacter } from '@/content/characters'
 import { getGroup } from '@/content/characterGroups'
 import { badgeName, getShopItem } from '@/content/shop'
@@ -116,7 +116,7 @@ export function PlayerProfile() {
           {[
             { value: `${Math.round(overall * 100)}%`, label: 'Knowledge' },
             { value: p.credits.toLocaleString(), label: 'Credits' },
-            { value: `${p.completedEpisodes.length} of ${episodes.length}`, label: 'Episodes' },
+            { value: `${p.completedEpisodes.length} of ${lineupFor(state.groupId, state.published).length}`, label: 'Episodes' },
           ].map((s) => (
             <div key={s.label}>
               <div className="font-sans text-[28px] font-semibold tabular-nums tracking-[-0.02em] text-bone">

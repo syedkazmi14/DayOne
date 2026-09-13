@@ -1,8 +1,8 @@
-import { knowledgeBase } from '@/content/knowledge'
+import { concepts, knowledgeBase } from '@/content/knowledge'
 import { partitionValidItems, type ValidationError } from '@/content/validateKnowledge'
 import { sourceDocs } from '@/content/sourceDocs'
 import type { KnowledgeItem, SourceDoc } from '@/types'
-import { complete, isLive, LLMUnavailable } from './llm'
+import { complete, isLive, LLMUnavailable, parseJsonReply } from './llm'
 
 /* ============================================================================
  * KNOWLEDGE AGENT — the authoring half of the product.
@@ -15,11 +15,15 @@ import { complete, isLive, LLMUnavailable } from './llm'
  * must not depend on an extraction job completing.
  * ========================================================================== */
 
+/* The validator accepts only these concept ids. A prompt that does not list
+ * them gets invented labels ("Password Security") and every item rejected. */
+const CONCEPT_TAXONOMY = concepts.map((c) => `  ${c.id} — ${c.blurb}`).join('\n')
+
 export const KNOWLEDGE_AGENT_SYSTEM = `You extract structured onboarding knowledge from company material.
 
 For each distinct normative statement in the source, emit one object:
 {
-  "id": "K-XXX-NN",
+  "id": short id, e.g. "K-01",
   "topic": short noun phrase,
   "rule": the single normative statement, in plain language, imperative where possible,
   "severity": "critical" | "high" | "medium" | "low",
@@ -28,17 +32,26 @@ For each distinct normative statement in the source, emit one object:
   "edgeCases": [situations where the rule still applies but people assume it does not],
   "recommended": [concrete compliant actions],
   "prohibited": [concrete non-compliant actions],
-  "concepts": [from the fixed concept taxonomy],
+  "concepts": [one or more concept ids from the taxonomy below — exact ids only],
   "source": { "doc": filename, "section": section number and title, "page": number }
 }
 
+Concept taxonomy — the ONLY allowed values for "concepts":
+${CONCEPT_TAXONOMY}
+
 Rules:
 - One rule per item. Split compound policies.
+- Only emit statements that fit at least one concept above. Skip everything else (expenses, travel, HR admin). If nothing fits, return [].
 - Rewrite legalese into language a new employee would use. Preserve meaning exactly.
 - Never invent a consequence. If the source does not state the mechanism, infer only what is technically necessary and mark severity conservatively.
 - Always populate source. Unciteable knowledge is unusable downstream — a character that cannot cite will be made to say "I don't know".
+- Be concise: each string under 200 characters, at most 3 entries in each list.
 
 Return a JSON array only.`
+
+/** Ids the model writes are only unique within one reply; these are unique per document. */
+const extractedId = (doc: SourceDoc, i: number) =>
+  `K-${doc.id.toUpperCase().slice(0, 48)}-${String(i + 1).padStart(2, '0')}`
 
 export type PipelineStage =
   | 'parse'
@@ -103,10 +116,11 @@ export async function* runKnowledgeAgent(
             const raw = await complete({
               system: KNOWLEDGE_AGENT_SYSTEM,
               messages: [{ role: 'user', content: `FILE: ${doc.name}\n\n${doc.excerpt}` }],
-              maxTokens: 1600,
+              // A long policy yields many items; a reply cut off mid-array does not parse.
+              maxTokens: 4000,
               temperature: 0.2,
             })
-            const parsed: unknown = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ''))
+            const parsed = parseJsonReply(raw)
 
             /* A model completion is untrusted input, and this is the only path
              * that produces knowledge the content suite never saw. An item that
@@ -118,7 +132,12 @@ export async function* runKnowledgeAgent(
               rejected = split.rejected.flatMap((r) => r.errors)
               /* Every item rejected is a failed extraction, not an empty one —
                * fall back so the doc still contributes its known-good rules. */
-              emitted = split.valid.length ? split.valid : null
+              /* Ids are re-issued per document so two uploads (or an upload and
+               * the shipped base) never overwrite each other, and the citation
+               * names the file that was actually uploaded. */
+              emitted = split.valid.length
+                ? split.valid.map((item, i) => ({ ...item, id: extractedId(doc, i), source: { ...item.source, doc: doc.name } }))
+                : null
             }
           } catch (e) {
             if (!(e instanceof LLMUnavailable) && !(e instanceof SyntaxError)) throw e

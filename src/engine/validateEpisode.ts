@@ -54,11 +54,14 @@ export const successors = (s: Scene): string[] =>
         ? [s.next]
         : []
 
+/** A lesson at or under this length does not explain a mechanism. */
+export const MIN_LESSON_CHARS = 180
+
 export function validateEpisode(ep: Episode, opts: ValidateOptions = {}): GraphReport {
   const errors: GraphIssue[] = []
   const err = (sceneId: string, message: string) => errors.push({ sceneId, message })
   const resolve = opts.resolveKnowledge ?? episodeKnowledgeResolver(ep)
-  const minLesson = opts.minLessonChars ?? 180
+  const minLesson = opts.minLessonChars ?? MIN_LESSON_CHARS
   const scenes: Record<string, Scene> = ep?.scenes ?? {}
   const ids = Object.keys(scenes)
 

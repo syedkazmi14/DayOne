@@ -9,3 +9,5 @@ tsconfig.tsbuildinfo
 # generated assets + content database written by server/mediaServer.mjs
 storage
 data
+# local sample documents for trying Studio ingest
+test-docs

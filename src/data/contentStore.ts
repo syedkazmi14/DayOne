@@ -23,6 +23,9 @@ export interface ContentStore {
   saveKnowledge(items: KnowledgeItem[]): Promise<void>
   listSourceDocs(): Promise<SourceDoc[]>
   saveSourceDoc(doc: SourceDoc): Promise<void>
+  /** Removes an uploaded document (and its stored text). */
+  deleteSourceDoc(id: string): Promise<void>
+  deleteKnowledge(ids: string[]): Promise<void>
 }
 
 export type ContentStoreKind = 'static' | 'db'
@@ -57,6 +60,12 @@ export function createStaticStore(
     saveSourceDoc: async () => {
       throw new ReadOnlyStoreError('saveSourceDoc')
     },
+    deleteSourceDoc: async () => {
+      throw new ReadOnlyStoreError('deleteSourceDoc')
+    },
+    deleteKnowledge: async () => {
+      throw new ReadOnlyStoreError('deleteKnowledge')
+    },
   }
 }
 
@@ -79,7 +88,8 @@ export const contentStoreLabel = (): string =>
 
 /**
  * Talks to server/mediaServer.mjs's /api/media/content/* routes, which
- * persist to a local SQLite file (node:sqlite — no dependency, no account).
+ * persist to Supabase Postgres when the server has SUPABASE_SECRET_KEY, and
+ * to a local SQLite file (node:sqlite — no dependency, no account) otherwise.
  * A Studio upload and its extracted knowledge now survive a reload; without
  * the media server running, `active` never switches away from the static
  * store below, so nothing here changes for anyone not running it.
@@ -109,6 +119,16 @@ export function createHttpContentStore(base: string): ContentStore {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(doc),
+      })
+    },
+    async deleteSourceDoc(id) {
+      await fetch(`${base}/content/docs/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    },
+    async deleteKnowledge(ids) {
+      await fetch(`${base}/content/knowledge/remove`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ids }),
       })
     },
   }

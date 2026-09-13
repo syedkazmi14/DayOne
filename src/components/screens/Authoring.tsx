@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, FileText, Film, Layers, Play, Presentation, Rocket, ShieldCheck, Upload, Wand2 } from 'lucide-react'
+import { ArrowLeft, FileText, Film, Layers, Play, Presentation, Rocket, ShieldCheck, Trash2, Upload, Wand2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { runKnowledgeAgent, STAGES, type PipelineStage } from '@/ai/knowledgeAgent'
 import {
@@ -16,6 +16,7 @@ import {
 } from '@/ai/episodeGenerator'
 import { isLive, llmLabel, llmMode } from '@/ai/llm'
 import { conceptLabel } from '@/content/knowledge'
+import { characterGroups, DEFAULT_GROUP_ID, getGroup } from '@/content/characterGroups'
 import { sourceDocs } from '@/content/sourceDocs'
 import { contentStore, contentStoreLabel } from '@/data/contentStore'
 import { validateEpisode } from '@/engine/validateEpisode'
@@ -51,7 +52,10 @@ const DOC_ICON = {
 } as const
 
 export function Authoring() {
-  const { state, dispatch, group } = useGame()
+  const { state, dispatch } = useGame()
+  /* An episode is written once, with one cast, and recast at play time for
+   * whichever show each employee picks — so the Studio never asks for a show. */
+  const sourceCast = getGroup(DEFAULT_GROUP_ID)
   const { health, pending } = useMediaStatus()
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -71,6 +75,27 @@ export function Authoring() {
   const [result, setResult] = useState<GenerateResult | null>(null)
   const [draft, setDraft] = useState<Episode | null>(null)
   const [published, setPublished] = useState<string | null>(null)
+
+  /* Renders take minutes. Once a draft is in the library, every asset that
+   * lands is saved there too — even after the admin publishes, previews, or
+   * leaves the Studio (the render loop outlives this screen; dispatch does too). */
+  const libraryRef = useRef(state.published)
+  libraryRef.current = state.published
+  const onAssets = (ep: Episode) => {
+    setDraft(ep)
+    const saved = libraryRef.current[ep.id]
+    if (saved) dispatch({ type: 'PUBLISH_EPISODE', episode: ep, status: saved.provenance?.status ?? 'draft' })
+  }
+
+  /* Pick up a saved episode again — to render the assets it is missing. */
+  const reviewRef = useRef<HTMLDivElement>(null)
+  const openInStudio = (ep: Episode) => {
+    setResult(null)
+    setGen({ busy: false, stages: {} })
+    setDraft(ep)
+    setPublished(ep.provenance?.status === 'published' ? ep.id : null)
+    requestAnimationFrame(() => reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
 
   const docs = [...sourceDocs, ...uploads]
   const report = useMemo(() => (draft ? validateEpisode(draft) : null), [draft])
@@ -108,29 +133,48 @@ export function Authoring() {
   }
 
   async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+    const files = [...(e.target.files ?? [])]
     e.target.value = ''
-    if (!file) return
-    try {
-      const doc = await parseFile(file)
-      setUploads((u) => [...u.filter((d) => d.id !== doc.id), doc])
-      const key = await storeSourceDoc(doc)
-      // Best-effort: the static store refuses writes (no media server), and
-      // that must not take the upload down — it just will not survive reload.
+    const notes: string[] = []
+    for (const file of files) {
       try {
-        await contentStore().saveSourceDoc(doc)
-      } catch {
-        /* static store, or the server dropped — doc still stands for this session */
+        const doc = await parseFile(file)
+        setUploads((u) => [...u.filter((d) => d.id !== doc.id), doc])
+        const key = await storeSourceDoc(doc)
+        // Best-effort: the static store refuses writes (no media server), and
+        // that must not take the upload down — it just will not survive reload.
+        try {
+          await contentStore().saveSourceDoc(doc)
+        } catch {
+          /* static store, or the server dropped — doc still stands for this session */
+        }
+        notes.push(
+          `${doc.name} parsed · ${doc.excerpt.split(/\s+/).length} words · ${key ? `stored at ${key}` : 'not stored (no media server) — kept for this session'}`,
+        )
+      } catch (err) {
+        notes.push(err instanceof ParseError ? err.message : `Could not read ${file.name}.`)
       }
-      setUploadNote(
-        `${doc.name} parsed · ${doc.excerpt.split(/\s+/).length} words · ${key ? `stored at ${key}` : 'not stored (no media server) — kept for this session'}`,
-      )
-    } catch (err) {
-      setUploadNote(err instanceof ParseError ? err.message : 'Could not read that file.')
+    }
+    if (notes.length) setUploadNote(notes.join('\n'))
+  }
+
+  /* Removing a document removes what was extracted from it — here and in storage. */
+  async function removeDoc(doc: SourceDoc) {
+    const dropped = extracted.filter((k) => k.source.doc === doc.name).map((k) => k.id)
+    setUploads((u) => u.filter((d) => d.id !== doc.id))
+    setExtracted((prev) => prev.filter((k) => k.source.doc !== doc.name))
+    setYieldByDoc(({ [doc.id]: _removed, ...rest }) => rest)
+    setUploadNote(`${doc.name} removed${dropped.length ? ` · ${dropped.length} rules dropped` : ''}`)
+    try {
+      await contentStore().deleteSourceDoc(doc.id)
+      if (dropped.length) await contentStore().deleteKnowledge(dropped)
+    } catch {
+      /* static store — nothing was persisted to remove */
     }
   }
 
   async function runAgent() {
+    const previous = extracted.map((k) => k.id)
     setRunning(true)
     setExtracted([])
     setYieldByDoc({})
@@ -149,13 +193,14 @@ export function Authoring() {
     setStage({})
     setRunning(false)
     setRan(true)
-    if (collected.length) {
-      try {
-        await contentStore().saveKnowledge(collected)
-      } catch {
-        /* static store, or the server dropped — extraction still powers
-         * episode generation below, it just will not survive a reload */
-      }
+    try {
+      if (collected.length) await contentStore().saveKnowledge(collected)
+      // A re-run replaces the set: rules from removed or re-extracted docs go.
+      const stale = previous.filter((id) => !collected.some((k) => k.id === id))
+      if (stale.length) await contentStore().deleteKnowledge(stale)
+    } catch {
+      /* static store, or the server dropped — extraction still powers
+       * episode generation below, it just will not survive a reload */
     }
   }
 
@@ -166,7 +211,7 @@ export function Authoring() {
     try {
       const r = await generateEpisode({
         topic,
-        groupId: group.id,
+        groupId: sourceCast.id,
         mastery: state.player.mastery,
         corpus: extracted,
         paceMs: 320,
@@ -190,6 +235,14 @@ export function Authoring() {
     if (status === 'published') setPublished(draft.id)
   }
   const play = () => draft && dispatch({ type: 'SELECT_EPISODE', episodeId: draft.id })
+  /* Preview in a chosen show. Saving first keeps the draft's assets when the
+   * Studio unmounts, and never demotes an episode that is already live. */
+  const previewAs = (groupId: string) => {
+    if (!draft) return
+    dispatch({ type: 'PUBLISH_EPISODE', episode: draft, status: published ? 'published' : 'draft' })
+    dispatch({ type: 'SELECT_GROUP', groupId })
+    play()
+  }
 
   const step = (locked: boolean, done: boolean): StepState => (locked ? 'locked' : done ? 'done' : 'active')
   const hasImages = !!draft && Object.values(draft.scenes).some((s) => s.assets?.background)
@@ -199,13 +252,6 @@ export function Authoring() {
   return (
     <div className="relative h-full overflow-y-auto">
       <div className="mx-auto max-w-[1180px] px-6 pb-32 pt-36 sm:px-10">
-        <button
-          onClick={() => dispatch({ type: 'GOTO', view: 'home' })}
-          className="mb-12 font-sans text-[13px] text-bone-dim transition-colors hover:text-bone"
-        >
-          ← Episodes
-        </button>
-
         <Eyebrow className="text-signal">studio · ai authoring</Eyebrow>
         <h1 className="t-display mt-3 text-[clamp(2.2rem,7vw,4.4rem)] text-bone">
           BORING MATERIAL
@@ -266,11 +312,52 @@ export function Authoring() {
             value={contentStoreLabel()}
             detail={
               contentStore().kind === 'db'
-                ? 'Uploads and extracted rules survive a reload — stored in the media server’s local database.'
+                ? health?.content.kind === 'supabase'
+                  ? 'Uploads, extracted rules and published episodes are shared across every browser — stored in Supabase.'
+                  : 'Uploads, extracted rules and published episodes survive a reload — stored in the media server’s local database.'
                 : 'No media server running — uploads and extraction live in this session only, and are lost on reload.'
             }
             tone={contentStore().kind === 'db' ? 'good' : 'neutral'}
           />
+        </div>
+
+        {/* published library */}
+        <div className="mt-12">
+          <Rule label="published library" />
+          {Object.values(state.published).length === 0 ? (
+            <p className="mt-5 max-w-2xl font-sans text-[13px] font-light leading-relaxed text-bone-faint">
+              Nothing built yet. Employees in every show play First Day until you publish a topic below.
+            </p>
+          ) : (
+            <div className="mt-5 space-y-px">
+              {Object.values(state.published).map((ep) => {
+                const live = ep.provenance?.status === 'published'
+                return (
+                  <div
+                    key={ep.id}
+                    data-library-episode={ep.id}
+                    className="flex flex-wrap items-center gap-3 rounded border border-bone/8 bg-ink-900/30 px-4 py-3"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-sans text-[14px] text-bone">{ep.title}</span>
+                    <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">{ep.topic}</span>
+                    <Chip tone={live ? 'good' : 'signal'}>{live ? 'live for employees' : 'draft'}</Chip>
+                    <Btn variant="outline" onClick={() => openInStudio(ep)}>
+                      open in studio
+                    </Btn>
+                    {live ? (
+                      <Btn variant="outline" onClick={() => dispatch({ type: 'REMOVE_EPISODE', episodeId: ep.id })}>
+                        unpublish
+                      </Btn>
+                    ) : (
+                      <Btn onClick={() => dispatch({ type: 'PUBLISH_EPISODE', episode: ep, status: 'published' })}>
+                        make live
+                      </Btn>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* 1 ─ knowledge */}
@@ -293,6 +380,17 @@ export function Authoring() {
                     <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-bone-faint">
                       {d.type === 'video' ? 'transcript' : `${d.pages}pp`}
                     </span>
+                    {uploads.some((u) => u.id === d.id) && (
+                      <button
+                        onClick={() => void removeDoc(d)}
+                        disabled={running}
+                        aria-label={`remove ${d.name}`}
+                        title="Remove this document and the rules extracted from it"
+                        className="text-bone-faint transition-colors hover:text-danger disabled:opacity-40"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                   <p className="mt-2.5 line-clamp-3 font-sans text-[11.5px] font-light italic leading-relaxed text-bone-faint">{d.excerpt}</p>
                   {active && (
@@ -339,6 +437,7 @@ export function Authoring() {
             <input
               ref={fileInput}
               type="file"
+              multiple
               accept={SUPPORTED_EXTENSIONS.map((x) => `.${x}`).join(',')}
               onChange={(e) => void onUpload(e)}
               className="hidden"
@@ -350,7 +449,7 @@ export function Authoring() {
               {extracted.length} knowledge items
             </span>
           </div>
-          {uploadNote && <p className="mt-3 font-mono text-[10px] text-bone-dim">{uploadNote}</p>}
+          {uploadNote && <p className="mt-3 whitespace-pre-line font-mono text-[10px] text-bone-dim">{uploadNote}</p>}
 
           {extracted.length > 0 && (
             <div className="mt-6 grid gap-1.5 lg:grid-cols-2">
@@ -415,7 +514,7 @@ export function Authoring() {
             </button>
           </form>
           <p className="mt-3 font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
-            cast from {group.name} · personalised for the current employee profile
+            written with the {sourceCast.name} cast · recast automatically for whichever show each employee picks
           </p>
         </Step>
 
@@ -469,6 +568,7 @@ export function Authoring() {
         </Step>
 
         {/* 4 ─ review */}
+        <div ref={reviewRef} className="scroll-mt-28" />
         <Step
           n={4}
           title="REVIEW THE GRAPH"
@@ -485,7 +585,7 @@ export function Authoring() {
           detail="Dialogue scenes get a generated background with character sprites over it; each major beat gets a keyframe for its clip. Rendered once, here."
           state={step(!draft, hasImages)}
         >
-          {draft && <VisualAssets episode={draft} onChange={setDraft} />}
+          {draft && <VisualAssets episode={draft} onChange={onAssets} />}
         </Step>
 
         {/* 6 ─ voice */}
@@ -495,7 +595,7 @@ export function Authoring() {
           detail="Every character line, in that character's ElevenLabs voice."
           state={step(!draft, hasVoice)}
         >
-          {draft && <VoiceAssets episode={draft} onChange={setDraft} />}
+          {draft && <VoiceAssets episode={draft} onChange={onAssets} />}
         </Step>
 
         {/* 7 ─ video */}
@@ -505,7 +605,7 @@ export function Authoring() {
           detail="Four short clips — cold open, confrontation, incident, ending — each animated from its keyframe. Everything else stays background, sprite and voice."
           state={step(!draft, hasClips)}
         >
-          {draft && <VideoAssets episode={draft} onChange={setDraft} />}
+          {draft && <VideoAssets episode={draft} onChange={onAssets} />}
         </Step>
 
         {/* 8 ─ lens */}
@@ -526,15 +626,11 @@ export function Authoring() {
           state={step(!report?.ok, !!published)}
         >
           <div className="flex flex-wrap items-center gap-3">
-            <Btn
-              variant="outline"
-              onClick={() => {
-                publish('draft')
-                play()
-              }}
-            >
-              <Play size={12} /> preview as employee
-            </Btn>
+            {characterGroups.map((g) => (
+              <Btn key={g.id} variant="outline" onClick={() => previewAs(g.id)}>
+                <Play size={12} /> preview · {g.name}
+              </Btn>
+            ))}
             <Btn onClick={() => publish('published')} disabled={!!published}>
               <Rocket size={13} /> {published ? 'published' : 'publish episode'}
             </Btn>
@@ -546,7 +642,7 @@ export function Authoring() {
           </div>
           {published && (
             <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-good">
-              on the {group.name} shelf · every employee who opens it gets their own act three
+              live for every employee · recast for all {characterGroups.length} shows · each player gets their own act three
             </p>
           )}
         </Step>

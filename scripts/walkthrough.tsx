@@ -112,10 +112,7 @@ const showTiles = ['Rick and Morty', 'South Park', 'Family Guy', 'The Simpsons']
   (n) => buttonsWith(n).length > 0,
 )
 ok(showTiles.length === 4, `all four shows offered (got ${showTiles.length})`)
-ok(
-  [...document.querySelectorAll('button')].filter((b) => b.textContent?.includes('In production')).length === 3,
-  'the three shows with no playable episode say so',
-)
+ok(!has('In production') && buttonsWith('1 episode').length === 4, 'every show plays the same lineup — no show is "in production"')
 
 await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(150) })
 await flush(150)
@@ -138,7 +135,7 @@ await flush(150)
 console.log('\n=== 1. HOME / EPISODE SELECT ===')
 ok(has('DayOne'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
-ok(has('THE CLIENT') && has('THE DEADLINE'), 'locked episodes on the shelf')
+ok(!has('THE CLIENT') && !has('THE DEADLINE'), 'placeholder episodes are gone — the shelf is playable episodes only')
 ok(has('Rick and Morty'), 'selected roster named in the hero')
 ok(has('RICK') && has('MORTY') && has('SUMMER') && has('JERRY'), 'cast switcher shows the four portraits')
 ok(document.querySelectorAll('img[src^="/characters/"]').length === 4, 'exactly the selected roster is rendered — no big card section')
@@ -179,24 +176,20 @@ ok(showRows().length === 0, 'the shows stay behind it — the menu is not four r
 await clickEl(menuItem('Change show')!, 80)
 ok(showRows().length === 4, `opening it lists all four shows (got ${showRows().length})`)
 ok(showRows().filter((b) => b.getAttribute('aria-checked') === 'true').length === 1, 'the current show is marked, exactly once')
-ok(
-  showRows().filter((b) => b.textContent?.includes('In production')).length === 3,
-  'the flyout labels the shows with nothing playable',
-)
+ok(showRows().every((b) => !b.textContent?.includes('In production')), 'no show in the flyout is labelled in production')
 
 await clickEl(showRows().find((b) => b.textContent?.includes('South Park'))!, 150)
 ok(!document.querySelector('[role="menu"]'), 'the menu closes on choosing, even though the view did not change')
 ok(has('South Park'), 'menu switched to South Park')
-ok(has('THE GROUP CHAT'), 'episode shelf followed the show')
-ok(!has('THE CLIENT'), 'the previous show’s episodes left the shelf')
+ok(has('FIRST') && buttonsWith('Start episode').length > 0, 'South Park plays the same First Day, and it is playable')
 ok(has('CARTMAN') || has('ERIC'), 'cast strip shows the new cast')
 ok(localStorage.getItem('onboard.group.v1') === 'south-park', 'the new show is persisted too')
 
 await pickShow('The Simpsons')
-ok(has('The Simpsons') && has('SECTOR 7-G'), 'every show is one click away — no cycling')
+ok(has('The Simpsons') && has('FIRST'), 'every show is one click away — no cycling')
 
 await pickShow('Rick and Morty')
-ok(has('Rick and Morty') && has('THE CLIENT'), 'back on Rick and Morty')
+ok(has('Rick and Morty') && has('FIRST'), 'back on Rick and Morty')
 
 // selecting a character marks it
 const first = portraits()[0]
@@ -395,9 +388,16 @@ ok(has('recent decisions'), 'decision history recorded')
 ok(has('questions you asked'), 'chat transcript recorded')
 await click('episodes')
 await flush(200)
-await click('studio')
+ok(![...document.querySelectorAll('header button')].some((b) => b.textContent?.trim() === 'Studio'), 'employees have no Studio in the nav')
+await click('account menu')
+await click('sign out')
+await flush(150)
+await click('Company admin?')
+await click('Company SSO')
 await flush(300)
-ok(has('BORING MATERIAL'), 'studio screen')
+ok(!has('Pick your show'), 'admins skip the show picker')
+ok(has('BORING MATERIAL'), 'admins land in the Studio')
+ok(has('published library') && has('Nothing built yet'), 'the library starts empty — employees only have First Day')
 ok(has('Helix Security Handbook'), 'source documents listed')
 ok(has('KNOWLEDGE AGENT') && has('SCENARIO GENERATOR'), 'pipeline diagram')
 ok(has('run knowledge agent'), 'pipeline can be run')
@@ -431,7 +431,7 @@ const lensScenes = [...document.querySelectorAll('[data-lens-scene]')].map((e) =
 ok(lensScenes.length === 2 && lensScenes[0] !== lensScenes[1], `player A and B get different act threes (${lensScenes.join(' / ')})`)
 await click('publish episode')
 await flush(150)
-ok(has('shelf · every employee'), 'episode published')
+ok(has('live for every employee') && has('live for employees'), 'episode published and listed as live in the library')
 await click('play it')
 await flush(250)
 ok(has('generated episode') && has('validated graph'), 'intro shows generated provenance')
@@ -450,7 +450,24 @@ ok(has('what actually happened') && has('K-'), 'generated consequence teaches wi
 const exitBtn = document.querySelector<HTMLElement>('button[aria-label="Exit episode"]')
 if (exitBtn) await act(async () => { exitBtn.click(); await sleep(200) })
 await flush(300)
-ok(has("generated from your company's material"), 'the published episode sits on the home shelf')
+ok(has('BORING MATERIAL'), 'an admin leaving a preview returns to the Studio, not a show lobby')
+
+console.log('\n=== 11c. EMPLOYEE: THE ADMIN’S EPISODE, IN THE SHOW THEY PICKED ===')
+await click('account menu')
+await click('sign out')
+await flush(150)
+await click('Company SSO')
+await flush(200)
+ok(has('Pick your show') && buttonsWith('2 episodes').length === 4, 'every show now offers the published topic alongside First Day')
+await act(async () => { buttonsWith('Family Guy')[0].click(); await sleep(150) })
+await flush(250)
+ok(has('THE SUSPICIOUS REQUEST') && has("From your company's material"), 'the admin-built episode is on the employee shelf')
+await clickEl(buttonsWith('THE SUSPICIOUS REQUEST')[0], 250)
+ok(has('BRIAN GRIFFIN') && has('PETER GRIFFIN') && !has('SUMMER SMITH') && !has('RICK SANCHEZ'), 'the employee plays it with the Family Guy cast')
+await click('episodes')
+await flush(250)
+await pickShow('Rick and Morty')
+ok(has('Rick and Morty') && has('FIRST'), 'back on Rick and Morty for the second run')
 
 console.log('\n=== 12. SECOND RUN: THE FAILURE BRANCHES ===')
 await openProfile()                // reset lives on the profile screen
@@ -525,9 +542,10 @@ console.log('    score shown: ' + (m ? m[1] : '?'))
 ok(!!m && Number(m[1]) < 35, 'bad run scores low')
 
 console.log('\n=== 13. THE LOOP: NEXT EPISODE FROM THE WEAKNESS ===')
-await click('generate my next episode')
-ok(await waitFor(() => has('generated episode'), 8000), 'results generated a new episode from the weakest area and opened it')
-ok(has('personalised before you start'), 'the new episode is adaptive too')
+ok(has('recommended for you'), 'results recommend an admin-built episode aimed at the weakness — employees never generate')
+await click('play recommended episode')
+await flush(300)
+ok(has('generated episode') && has('personalised before you start'), 'the recommendation opens the adaptive admin-built episode')
 
 console.log('\n=== 14. SHOP ===')
 const card = (name: string) =>

@@ -39,7 +39,9 @@ const MODEL_OVERRIDE = env.VITE_LLM_MODEL
 
 const DEFAULT_MODEL: Record<'anthropic' | 'openai', string> = {
   anthropic: 'claude-sonnet-5',
-  openai: 'gpt-4.1-nano',
+  // The cheapest model that extracts reliably: gpt-4.1-nano tagged travel-expense
+  // rules as data handling on the sample docs; mini correctly skipped them.
+  openai: 'gpt-4.1-mini',
 }
 
 /** Anthropic wins if both keys are set, since it's this project's default provider. */
@@ -64,6 +66,35 @@ export const llmLabel = (): string => {
 }
 
 export class LLMUnavailable extends Error {}
+
+/**
+ * The first complete JSON value in a model reply. Models wrap JSON in code
+ * fences or add a sentence after it, and JSON.parse on the whole reply then
+ * fails. Throws SyntaxError when there is no complete value — a truncated
+ * reply included — exactly like JSON.parse, so callers keep their fallback.
+ */
+export function parseJsonReply(raw: string): unknown {
+  const s = raw.replace(/^\s*```(?:json)?\s*$/gim, '')
+  const start = s.search(/[[{]/)
+  if (start === -1) throw new SyntaxError('No JSON in model reply')
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+    } else if (ch === '"') inString = true
+    else if (ch === '{' || ch === '[') depth++
+    else if (ch === '}' || ch === ']') {
+      depth--
+      if (depth === 0) return JSON.parse(s.slice(start, i + 1))
+    }
+  }
+  throw new SyntaxError('Model reply ended before its JSON did')
+}
 
 /** Returns the model's text, or throws LLMUnavailable so callers can fall back. */
 export async function complete(req: LLMRequest): Promise<string> {

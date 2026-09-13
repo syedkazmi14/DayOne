@@ -1,7 +1,8 @@
+import { assignRoles, callName, ROLE_LABEL, type Role } from '@/content/castRoles'
 import { getGroup, groupCast } from '@/content/characterGroups'
 import { conceptLabel, knowledgeBase } from '@/content/knowledge'
 import { sanitizeText } from '@/content/validateKnowledge'
-import { validateEpisode, type GraphReport } from '@/engine/validateEpisode'
+import { MIN_LESSON_CHARS, validateEpisode, type GraphReport } from '@/engine/validateEpisode'
 import type {
   Character,
   Choice,
@@ -15,7 +16,7 @@ import type {
   SpeechArchetype,
   ThreatProfile,
 } from '@/types'
-import { complete, isLive, llmLabel, LLMUnavailable } from './llm'
+import { complete, isLive, llmLabel, LLMUnavailable, parseJsonReply } from './llm'
 import { CONFIDENCE_FLOOR, retrieve } from './retrieval'
 
 /* ============================================================================
@@ -120,31 +121,8 @@ export function selectKnowledge(topic: TopicDef, corpus: KnowledgeItem[] = knowl
 
 /* ------------------------------------------------------------------- roles */
 
-export type Role = 'mentor' | 'pressure' | 'peer' | 'manager'
-
-export const ROLE_LABEL: Record<Role, string> = {
-  mentor: 'security lead — explains the why',
-  pressure: 'the shortcut — applies the pressure',
-  peer: 'the peer — shares the risk',
-  manager: 'the manager — owns the deadline',
-}
-
-const ROLE_ARCHETYPE: Record<Role, SpeechArchetype> = {
-  mentor: 'authority',
-  pressure: 'chaotic',
-  peer: 'anxious',
-  manager: 'pragmatic',
-}
-
-export function assignRoles(cast: Character[]): Record<Role, Character> {
-  const pool = [...cast]
-  const out = {} as Record<Role, Character>
-  for (const role of ['mentor', 'pressure', 'peer', 'manager'] as Role[]) {
-    const i = pool.findIndex((c) => c.speechArchetype === ROLE_ARCHETYPE[role])
-    out[role] = pool.splice(i >= 0 ? i : 0, 1)[0] ?? cast[0]
-  }
-  return out
-}
+// Roles live with the cast data so the recast engine can use them too.
+export { assignRoles, ROLE_LABEL, type Role } from '@/content/castRoles'
 
 /* ------------------------------------------------------------------- plan */
 
@@ -261,10 +239,7 @@ const strip = (t: string) => t.trim().replace(/[.\s]+$/, '')
 const low = (t: string) => (KEEP_CAPS.test(t) ? t : t.charAt(0).toLowerCase() + t.slice(1))
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1)
 const firstSentence = (t: string) => (t.split(/(?<=\.)\s/)[0] ?? t).trim()
-const firstName = (c: Character) => {
-  const w = c.name.split(' ')[0]
-  return w.charAt(0) + w.slice(1).toLowerCase()
-}
+const firstName = (c: Character) => callName(c)
 
 const hash = (s: string) => {
   let h = 2166136261
@@ -652,10 +627,12 @@ export function applyScript(ep: Episode, script: unknown, speakers: Record<strin
       next.choices = s.choices.map((c) => ({ ...c, text: text(byId[c.id], 240) ?? c.text }))
     }
     if (s.outcome) {
+      // A lesson too thin to pass validation keeps the draft's, rather than sinking the whole script.
+      const lesson = text(patch.lesson, 700)
       next.outcome = {
         ...s.outcome,
         banner: text(patch.banner, 40)?.toUpperCase() ?? s.outcome.banner,
-        lesson: text(patch.lesson, 700) ?? s.outcome.lesson,
+        lesson: lesson && lesson.length > MIN_LESSON_CHARS ? lesson : s.outcome.lesson,
       }
     }
     const shotPrompt = text(patch.shotPrompt, 600)
@@ -699,7 +676,7 @@ async function writeScript(ep: Episode, cast: Cast): Promise<unknown> {
     maxTokens: 8000,
     temperature: 0.8,
   })
-  return JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ''))
+  return parseJsonReply(raw)
 }
 
 /* -------------------------------------------------------------- pipeline */

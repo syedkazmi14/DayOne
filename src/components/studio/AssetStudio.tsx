@@ -110,17 +110,21 @@ export function VisualAssets({ episode, onChange }: { episode: Episode; onChange
   const keyframes = plan.filter((i) => i.key.startsWith('image:keyframe'))
   const backgrounds = plan.filter((i) => !i.key.startsWith('image:keyframe'))
 
-  async function run() {
+  /** Images already in storage are reused; `force` (re-render) generates them again. */
+  async function run(force: boolean) {
     setRunning(true)
     let current = episode
     const set = (key: string, row: Row) => setRows((r) => ({ ...r, [key]: row }))
     await pool(plan, 4, async (item) => {
       set(item.key, { status: 'rendering', startedAt: Date.now() })
-      const { asset, error } = await image.generateBackground({ episodeId: current.id, sceneId: item.sceneId, prompt: item.prompt })
+      const { asset, error, reused } = await image.generateBackground({ episodeId: current.id, sceneId: item.sceneId, prompt: item.prompt, force })
       if (!asset) return set(item.key, { status: 'failed', note: error })
       current = attachAsset(current, item, asset)
       onChange(current)
-      set(item.key, { status: asset.tier === 'generated' ? 'generated' : 'procedural', note: asset.storageKey })
+      set(item.key, {
+        status: asset.tier === 'generated' ? 'generated' : 'procedural',
+        note: asset.storageKey && `${asset.storageKey}${reused ? ' · reused from storage' : ''}`,
+      })
     })
     setRunning(false)
   }
@@ -151,7 +155,7 @@ export function VisualAssets({ episode, onChange }: { episode: Episode; onChange
         ))}
       </div>
 
-      <Btn className="mt-4" onClick={() => void run()} disabled={running}>
+      <Btn className="mt-4" onClick={() => void run(finished)} disabled={running}>
         <Play size={12} fill="currentColor" />
         {running ? 'rendering…' : finished ? 're-render visual assets' : 'generate visual assets'}
       </Btn>
@@ -172,7 +176,8 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
   const keyframeOf = (sceneId: string): AssetRef | undefined => episode.scenes[sceneId]?.assets?.background
   const missing = live ? clips.filter((c) => keyframeOf(c.sceneId)?.tier !== 'generated') : []
 
-  async function run() {
+  /** Clips already in storage are reused; `force` (re-render) pays for new predictions. */
+  async function run(force: boolean) {
     setRunning(true)
     let current = episode
     const set = (key: string, row: Row) => setRows((r) => ({ ...r, [key]: row }))
@@ -183,7 +188,7 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
         if (live && image?.tier !== 'generated') return set(item.key, { status: 'blocked', note: 'generate visual assets first' })
         const startedAt = Date.now()
         set(item.key, { status: 'queued', startedAt })
-        const job = await requestClip(scene.shot, { episodeId: current.id, sceneId: item.sceneId, image }, video)
+        const job = await requestClip(scene.shot, { episodeId: current.id, sceneId: item.sceneId, image, force }, video)
         const done = await awaitClip(job, video, {
           intervalMs: 4000,
           timeoutMs: 8 * 60_000,
@@ -195,7 +200,9 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
         onChange(current)
         set(item.key, {
           status: asset.tier === 'generated' ? 'generated' : 'procedural',
-          note: asset.storageKey ? `${asset.storageKey} · ${Math.round((Date.now() - startedAt) / 1000)}s` : undefined,
+          note: asset.storageKey
+            ? `${asset.storageKey} · ${done.reused ? 'reused from storage' : `${Math.round((Date.now() - startedAt) / 1000)}s`}`
+            : undefined,
         })
       }),
     )
@@ -215,7 +222,7 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
           </div>
           <p className="mt-1 font-sans text-[12px] font-light leading-relaxed text-bone-faint">
             {live
-              ? `Each clip animates its scene keyframe on ${health?.video.provider} — about 5 seconds at 480p, rendered once and stored under company/episodes/${episode.id}/videos/. The model only animates the shot; the authored graph decides what happens.`
+              ? `Each clip animates its scene keyframe on ${health?.video.provider} — about 5 seconds at 480p, rendered once and stored under company/episodes/${episode.id}/videos/ (a clip already in storage is reused; re-render pays for a new one). The model only animates the shot; the authored graph decides what happens.`
               : 'No video provider is configured (set REPLICATE_API_TOKEN for the media server). Every clip resolves to procedural previs rendered live from its shot spec — labelled that way in the player, never presented as AI video.'}
           </p>
         </div>
@@ -236,7 +243,7 @@ export function VideoAssets({ episode, onChange }: { episode: Episode; onChange:
         ))}
       </div>
 
-      <Btn className="mt-4" onClick={() => void run()} disabled={running || missing.length > 0}>
+      <Btn className="mt-4" onClick={() => void run(finished)} disabled={running || missing.length > 0}>
         <Film size={13} />
         {running ? 'rendering clips…' : finished ? 're-render cinematic video' : 'generate cinematic video'}
       </Btn>

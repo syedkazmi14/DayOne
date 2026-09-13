@@ -13,11 +13,15 @@ export interface BackgroundRequest {
   episodeId: string
   sceneId: string
   prompt: string
+  /** Render again even if this scene's image is already in storage. */
+  force?: boolean
 }
 
 export interface BackgroundResult {
   asset: AssetRef | null
   error?: string
+  /** The stored image was reused rather than generated again. */
+  reused?: boolean
 }
 
 export interface ImageProvider {
@@ -65,9 +69,10 @@ export class ServerImageProvider implements ImageProvider {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(req),
       })
-      const body = (await res.json().catch(() => ({}))) as { url?: string; storageKey?: string; message?: string }
+      const body = (await res.json().catch(() => ({}))) as { url?: string; storageKey?: string; message?: string; reused?: boolean }
       if (!res.ok || !body.url) return { asset: null, error: body.message ?? `image request failed (${res.status})` }
       return {
+        reused: body.reused === true,
         asset: {
           kind: 'image',
           tier: 'generated',
