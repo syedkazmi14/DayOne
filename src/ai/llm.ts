@@ -42,13 +42,57 @@ const DEFAULT_MODEL: Record<'anthropic' | 'openai', string> = {
   openai: 'gpt-4.1-nano',
 }
 
+/** The OpenAI models the Studio offers. */
+export const OPENAI_MODELS = ['gpt-4.1-nano', 'gpt-4.1-mini', 'gpt-4.1'] as const
+export type OpenAIModel = (typeof OPENAI_MODELS)[number]
+
+const MODEL_KEY = 'onboard.model.v1'
+
+function loadModel(): string | null {
+  try {
+    const raw = localStorage.getItem(MODEL_KEY)
+    // Storage is not a trust boundary, same rule as the session and the show:
+    // a value outside the known model list is ignored rather than handed to
+    // the API as a model name, so a stale or hand-edited entry can't reach it.
+    return OPENAI_MODELS.includes(raw as OpenAIModel) ? raw : null
+  } catch {
+    return null
+  }
+}
+
+// The admin's runtime pick, if any. Starts from whatever survived validation
+// on load; env var and built-in default still apply until they choose one.
+let runtimeModel: string | null = loadModel()
+
+/** Set + persist the admin's runtime model choice. */
+export function setModel(id: string): void {
+  runtimeModel = id
+  try {
+    localStorage.setItem(MODEL_KEY, id)
+  } catch {
+    /* private mode — the choice lasts for this tab only */
+  }
+}
+
 /** Anthropic wins if both keys are set, since it's this project's default provider. */
 export const llmMode = (): LLMMode =>
   ANTHROPIC_KEY ? 'anthropic' : OPENAI_KEY ? 'openai' : PROXY_URL ? 'proxy' : 'offline'
 
 export const isLive = () => llmMode() !== 'offline'
 
-const modelFor = (mode: 'anthropic' | 'openai'): string => MODEL_OVERRIDE ?? DEFAULT_MODEL[mode]
+// A runtime choice from the Studio's picker beats the env var, which still
+// beats the built-in default — the admin picking a model in the room outranks
+// however the deployment happened to be configured.
+const modelFor = (mode: 'anthropic' | 'openai'): string =>
+  runtimeModel ?? MODEL_OVERRIDE ?? DEFAULT_MODEL[mode]
+
+/** What modelFor would resolve to right now, for the active provider — this is
+ * what the Studio's picker shows as selected. Proxy and offline modes have no
+ * provider of their own to key off, so they read the openai bucket; a runtime
+ * or env override still wins over that either way. */
+export function currentModel(): string {
+  return modelFor(llmMode() === 'anthropic' ? 'anthropic' : 'openai')
+}
 
 export const llmLabel = (): string => {
   const mode = llmMode()
