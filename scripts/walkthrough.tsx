@@ -235,7 +235,8 @@ ok(sawSpeaker, 'character speaker labels appeared during the scene')
 console.log('\n=== 4. RISK TERMINAL ===')
 ok(has('MAKE YOUR CALL'), 'wager terminal opened before the decision')
 ok(has('1.2×') && has('2×') && has('4×'), 'three fixed bets: SAFE 1.2× · RISKY 2× · ALL IN 4×')
-ok(has('no real money'), 'virtual-currency disclaimer present')
+ok(!has('no real money'), 'no disclaimer footer on the wager screen')
+ok(!!findByText('no bet'), 'no bet is offered as a full choice')
 ok(!has('estimate'), 'the mastery estimate stays hidden until the world reacts')
 await click('RISKY')
 await flush(150)
@@ -629,6 +630,30 @@ const badges = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['portal-b
 const worn = badges.cosmetics.ownedItems.reduce((pl: typeof base, id: string) => cos.equip(pl, id), badges)
 ok(worn.cosmetics.equippedBadges.length === cos.MAX_EQUIPPED_BADGES, 'badge slots are capped')
 ok(cos.unequip(worn, 'portal-badge').cosmetics.equippedBadges.length === 2, 'unequip frees a badge slot')
+
+console.log('\n=== 16. ZERO-BALANCE STIPEND ===')
+{
+  const store = await import('../src/engine/gameStore')
+  const { firstDay } = await import('../src/content/episodes')
+  const { ZERO_BALANCE_STIPEND } = await import('../src/engine/risk')
+  const decision = Object.values(firstDay.scenes).find((sc) => sc.kind === 'decision' && sc.allowWager)!
+  const best = decision.choices!.find((c) => c.quality === 'best')!
+  const worse = decision.choices!.find((c) => c.quality !== 'best')!
+  const at = (credits: number) => ({
+    ...store.initialState(),
+    episodeId: firstDay.id,
+    sceneId: decision.id,
+    phase: 'choices' as const,
+    player: { ...store.initialState().player, credits },
+  })
+  const choose = (st: ReturnType<typeof at>, id: string) => store.reducer(st, { type: 'CHOOSE', choiceId: id })
+  const broke = choose(at(0), best.id)
+  ok(broke.player.credits === ZERO_BALANCE_STIPEND, 'a broke player who answers best gets a stipend')
+  ok(choose(at(0), worse.id).player.credits === 0, 'no stipend for a broke player who misses')
+  ok(choose(at(120), best.id).player.credits === 120, 'no stipend for a player who had credits and passed on the bet')
+  const next = store.reducer({ ...broke, sceneId: decision.id, phase: 'dialogue', dialogueIndex: decision.dialogue.length - 1 }, { type: 'ADVANCE_DIALOGUE' })
+  ok(next.phase === 'wager', 'the stipend reopens the wager screen at the next decision')
+}
 
 console.log('\n' + (fails === 0 ? '✅ WALKTHROUGH PASSED' : `❌ ${fails} STEP(S) FAILED`))
 process.exit(fails === 0 ? 0 : 1)

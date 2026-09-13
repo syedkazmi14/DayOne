@@ -30,7 +30,14 @@ export const MULTIPLIER: Record<WagerTier, number> = { safe: 1.2, risky: 2, alli
 /** How sure each bet says the player is. Feeds calibration, never the payout. */
 export const TIER_CONFIDENCE: Record<WagerTier, number> = { safe: 0.55, risky: 0.75, allin: 0.95 }
 
-const LABEL: Record<WagerTier, string> = { safe: 'SAFE', risky: 'RISKY', allin: 'ALL IN' }
+const LABEL: Record<WagerTier, string> = { safe: 'Safe', risky: 'Risky', allin: 'All in' }
+
+/**
+ * Paid on a best answer when the player reached the decision with nothing to
+ * stake, so going broke is never a permanent lockout from wagering. A player
+ * who had credits and passed on the bet gets nothing.
+ */
+export const ZERO_BALANCE_STIPEND = 25
 
 /** Share of the balance each tier puts at risk. */
 const STAKE_SHARE: Record<WagerTier, number> = { safe: 0.1, risky: 0.3, allin: 1 }

@@ -17,7 +17,7 @@ import type {
 } from '@/types'
 import { applyDecision, baselineMastery, episodeScore, levelFromXp, selectVariant } from './adaptive'
 import { awardForDecision, awardForEpisode, equip, freshCosmetics, purchase, unequip } from './cosmetics'
-import { estimateSuccess, resolveWager, wagerOptions, type WagerOption, type WagerTier } from './risk'
+import { estimateSuccess, resolveWager, wagerOptions, ZERO_BALANCE_STIPEND, type WagerOption, type WagerTier } from './risk'
 import { validateEpisode } from './validateEpisode'
 
 /* ============================================================================
@@ -467,6 +467,8 @@ export function reducer(state: GameState, action: Action): GameState {
           won: verdict === 'win',
         }
       }
+      const stipend = state.player.credits === 0 && choice.quality === 'best' ? ZERO_BALANCE_STIPEND : 0
+      credits += stipend
 
       const record: DecisionRecord = {
         sceneId: scene.id,
@@ -495,7 +497,7 @@ export function reducer(state: GameState, action: Action): GameState {
         lastWager: wager ?? null,
         stagedWager: null,
         decisionsThisEpisode: [...state.decisionsThisEpisode, record],
-        creditsDelta: state.creditsDelta + (wager ? wager.payout - wager.staked : 0),
+        creditsDelta: state.creditsDelta + (wager ? wager.payout - wager.staked : 0) + stipend,
       }
       return enterScene(mid, ep, choice.consequenceSceneId)
     }
