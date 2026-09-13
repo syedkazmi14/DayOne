@@ -61,7 +61,13 @@ export function SignIn({ onSignIn }: Props) {
 
         {/* right: sign in and go */}
         <div className="flex flex-col justify-center px-6 py-14 sm:px-12 lg:px-16 lg:py-16">
-          <Eyebrow>{admin ? 'company admin' : 'sign in'}</Eyebrow>
+          {/* The one eyebrow in DM Sans rather than the mono default: it labels the
+            * form directly below it, and mono read as a system caption there. A
+            * weight and tracking bump compensates — DM Sans at 10px uppercase is
+            * noticeably lighter than JetBrains Mono at the same size. */}
+          <Eyebrow className="font-sans font-medium tracking-[0.16em]">
+            {admin ? 'company admin' : 'sign in'}
+          </Eyebrow>
 
           {admin && (
             <p className="mt-3 max-w-sm font-sans text-[13px] font-light leading-relaxed text-bone-dim">
