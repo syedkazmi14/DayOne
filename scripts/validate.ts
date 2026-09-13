@@ -6,14 +6,16 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { firstDay } from '../src/content/episodes/firstDay'
 import { validateEpisode } from '../src/engine/validateEpisode'
-import { initialState, reducer, type Action, type GameState } from '../src/engine/gameStore'
+import { findEpisode, initialState, reducer, type Action, type GameState } from '../src/engine/gameStore'
 import { analyseRun, calibration, describeTelemetry } from '../src/engine/telemetry'
 import { applyScript, customTopic, generateEpisode, TOPICS, TopicNotCovered } from '../src/ai/episodeGenerator'
 import { attachAsset, planEpisodeAssets, presentationOf, visualTierOf } from '../src/media/assetPlan'
 import { awaitClip, clipSeconds, clipToAsset, motionPrompt, ProceduralPrevisProvider, requestClip, ServerVideoProvider, videoProvider } from '../src/media/video'
 import { imageProvider, ServerImageProvider } from '../src/media/image'
 import { RuntimeSpeechProvider, ServerAudioProvider } from '../src/media/audio'
-import { episodes, episodesForGroup, featuredEpisode } from '../src/content/episodes'
+import { episodes } from '../src/content/episodes'
+import { recastEpisode } from '../src/engine/recast'
+import { lineupFor, recommendNext } from '../src/engine/lineup'
 import { characterGroups, groupCast } from '../src/content/characterGroups'
 import { resolveVoiceProfile, voiceProfiles } from '../src/voice/voiceProfiles'
 import { knowledgeBase, knowledgeById, concepts } from '../src/content/knowledge'
@@ -129,10 +131,14 @@ for (const ep of episodes) {
   }
   ok(ep.locked || !!ep.scenes[ep.entrySceneId], `${ep.id} is unlocked but has no entry scene`)
 }
+/* One lineup, every show: each show plays the same episodes with its own cast. */
 for (const g of characterGroups) {
-  const shelf = episodesForGroup(g.id)
-  ok(shelf.length > 0, `${g.id} has no episodes on its shelf`)
-  ok(!!featuredEpisode(g.id), `${g.id} has nothing to feature in the hero`)
+  const lineup = lineupFor(g.id, {})
+  ok(lineup.length === episodes.length && lineup.every(e => !e.episode.locked), `${g.id} plays the full authored lineup`)
+  for (const { episode: ep } of lineup) {
+    ok(existsSync('public' + ep.image!.src), `${g.id}: ${ep.id} key art missing on disk (${ep.image?.src})`)
+    ok(ep.cast.every(id => characters[id]?.groupId === g.id), `${g.id}: ${ep.id} is cast from its own show`)
+  }
 }
 console.log(`${episodes.length} episodes across ${characterGroups.length} groups · every title has an image`)
 
@@ -374,6 +380,12 @@ ok(validItem.rule.includes('Security Portal'), 'sanitise must not mutate its inp
 console.log(`${kb.errors.length} errors on the shipped base · ${split.valid.length} valid / ${split.rejected.length} rejected on a mixed batch`)
 
 /* ------------------------------------------------------- ingest: parsing */
+{
+  const { KNOWLEDGE_AGENT_SYSTEM } = await import('../src/ai/knowledgeAgent')
+  const { concepts: taxonomy } = await import('../src/content/knowledge')
+  ok(taxonomy.every((c) => KNOWLEDGE_AGENT_SYSTEM.includes(`  ${c.id} — `)), 'the extraction prompt lists every concept id the validator accepts')
+}
+
 section('INGEST · DOCUMENT PARSING')
 
 const throws = (fn: () => unknown, code: string, msg: string) => {
@@ -449,6 +461,48 @@ ok(refusedWrite, 'the static store should refuse writes rather than silently dro
 console.log(`store=${store.kind} · ${(await store.listKnowledge()).length} rules · ${(await store.listSourceDocs()).length} docs · read-only`)
 
 /* ------------------------------------------------ engine: deterministic */
+section('ONE LINEUP, EVERY SHOW · RECASTING')
+const graphShape = (ep: Episode) =>
+  JSON.stringify(Object.values(ep.scenes).map(s => [
+    s.id, s.kind, s.next, s.variants?.map(v => [v.conceptFocus, v.sceneId]),
+    s.choices?.map(c => [c.id, c.quality, c.consequenceSceneId, c.scoreImpact, c.knowledgeConcepts]),
+    s.outcome?.citations, s.outcome?.tone, s.threat,
+  ]))
+const rmNames = /\b(Rick|Morty|Summer|Jerry|RICK|MORTY|SUMMER|JERRY|Sanchez|SANCHEZ)\b/
+const episodeTexts = (ep: Episode) =>
+  [ep.title, ep.subtitle, ep.synopsis, ...Object.values(ep.scenes).flatMap(s => [
+    s.title, s.subtitle, s.prompt, s.chatHook, s.outcome?.banner, s.outcome?.lesson,
+    ...s.dialogue.flatMap(d => [d.line, d.direction]),
+    ...(s.choices ?? []).flatMap(c => [c.text, c.ledgerLabel]),
+  ])].filter((t): t is string => !!t)
+
+ok(recastEpisode(firstDay, 'rick-and-morty') === firstDay, "Rick and Morty keep First Day's hand-written script, untouched")
+ok(recastEpisode(firstDay, null) === firstDay, 'no show (an admin) sees the episode as written')
+for (const g of characterGroups.filter(g => g.id !== 'rick-and-morty')) {
+  const rc = recastEpisode(firstDay, g.id)
+  for (const e of validateEpisode(rc).errors) ok(false, `${g.id}: ${e.sceneId} · ${e.message}`)
+  ok(graphShape(rc) === graphShape(firstDay), `${g.id}: same scenes, choices, consequences, scoring and adaptive act as the original`)
+  ok(
+    Object.values(rc.scenes).every(s => s.dialogue.every(d => d.characterId === 'you' || characters[d.characterId]?.groupId === g.id)),
+    `${g.id}: every line is spoken by its own cast`,
+  )
+  const leftover = episodeTexts(rc).filter(t => rmNames.test(t))
+  ok(leftover.length === 0, `${g.id}: no Rick and Morty names left${leftover.length ? ` — "${leftover[0].slice(0, 90)}"` : ''}`)
+  ok(recastEpisode(firstDay, g.id) === rc, `${g.id}: the recast is memoised`)
+}
+const hooks = (ep: Episode) => Object.values(ep.scenes).map(s => s.chatHook ?? '').join(' | ')
+const spFirstDay = recastEpisode(firstDay, 'south-park')
+const fgFirstDay = recastEpisode(firstDay, 'family-guy')
+const siFirstDay = recastEpisode(firstDay, 'the-simpsons')
+ok(episodeTexts(spFirstDay).some(t => t.includes('CARTMAN’S DESK')), 'South Park: Rick’s desk becomes Cartman’s desk')
+ok(hooks(spFirstDay).includes('Kyle is at your desk and he is not angry. Ask him anything.'), 'South Park: the mentor’s pronouns follow Kyle')
+ok(hooks(fgFirstDay).includes('Ask Lois what she would have done'), 'Family Guy: the manager’s pronouns follow Lois')
+ok(hooks(fgFirstDay).includes('Lois is curious now. Ask her what else her team does this way.'), 'Family Guy: object and possessive pronouns both follow Lois')
+ok(hooks(siFirstDay).includes('Lisa is at your desk and she is not angry. Ask her anything.'), 'The Simpsons: Lisa keeps she/her')
+ok(Object.values(spFirstDay.scenes).every(s => !s.assets?.audio), 'pre-rendered voice lines are dropped when the speaker changes')
+console.log(`  south park: ${hooks(spFirstDay).split(' | ').find(h => h.includes('Kyle'))}`)
+console.log(`  family guy: ${hooks(fgFirstDay).split(' | ').find(h => h.includes('Lois'))}`)
+
 section('ENGINE · DETERMINISTIC TRANSITIONS')
 const play = (s: GameState, ...actions: Action[]) => actions.reduce(reducer, s)
 const toPhase = (s: GameState, phase: GameState['phase'], limit = 60) => {
@@ -554,10 +608,56 @@ ok(validateEpisode(hostile).ok, 'the merged graph still validates')
 const leaky = applyScript(phishing.episode, { scenes: { g_d1: { choices: { [g1.choices![0].id]: 'This is the correct answer.' } } } }, speakers)
 ok(!validateEpisode(leaky).ok, 'a script that leaks correctness fails validation, so the generator discards it')
 
+const genInFamilyGuy = recastEpisode(phishing.episode, 'family-guy')
+ok(validateEpisode(genInFamilyGuy).ok && graphShape(genInFamilyGuy) === graphShape(phishing.episode), 'an admin-built episode recasts to any show without changing its graph')
+ok(!episodeTexts(genInFamilyGuy).some(t => rmNames.test(t)), 'the recast admin-built episode carries no source-cast names')
+
 /* ------------------------------------------------ engine: publishing */
+{
+  const { parseJsonReply } = await import('../src/ai/llm')
+  const { applyScript } = await import('../src/ai/episodeGenerator')
+  ok((parseJsonReply('```json\n{"a": "x}"}\n```\nHope this helps!') as { a: string }).a === 'x}', 'a model reply with fences and trailing prose still parses')
+  let truncatedIsSyntaxError = false
+  try {
+    parseJsonReply('[{"a": 1}, {"b":')
+  } catch (e) {
+    truncatedIsSyntaxError = e instanceof SyntaxError
+  }
+  ok(truncatedIsSyntaxError, 'a truncated model reply is a SyntaxError, so callers fall back')
+  const target = Object.values(phishing.episode.scenes).find((s) => s.kind === 'consequence')!
+  const thin = applyScript(phishing.episode, { scenes: { [target.id]: { lesson: 'Too short.', banner: 'New banner' } } }, { player: 'you' })
+  ok(
+    thin.scenes[target.id].outcome!.lesson === target.outcome!.lesson && thin.scenes[target.id].outcome!.banner === 'NEW BANNER' && validateEpisode(thin).ok,
+    'a thin model lesson keeps the drafted lesson instead of breaking the graph',
+  )
+}
+
 section('ENGINE · PUBLISHING GENERATED EPISODES')
 const genEp = phishing.episode
-const base0 = initialState()
+const admin0: GameState = { ...initialState(), session: { role: 'admin', provider: 'test', signedInAt: 0 } }
+const employee0: GameState = { ...initialState(), session: { role: 'employee', provider: 'test', signedInAt: 0 } }
+const base0 = admin0
+
+ok(reducer(employee0, { type: 'PUBLISH_EPISODE', episode: genEp, status: 'published' }) === employee0, 'employees cannot publish — only admins build episodes')
+ok(reducer(employee0, { type: 'GOTO', view: 'authoring' }) === employee0, 'employees cannot open the Studio')
+ok(reducer(admin0, { type: 'GOTO', view: 'home' }).view === 'authoring', 'an admin has no show lobby — home is the Studio')
+
+const liveLibrary = reducer(admin0, { type: 'PUBLISH_EPISODE', episode: genEp, status: 'published' }).published
+ok(lineupFor('south-park', liveLibrary).some(e => e.episode.id === genEp.id), 'a published topic appears in every show’s lineup')
+const southPark = play({ ...employee0, published: liveLibrary, groupId: 'south-park' }, { type: 'SELECT_EPISODE', episodeId: genEp.id }, { type: 'START_EPISODE' })
+ok(
+  southPark.groupId === 'south-park' && southPark.view === 'scene' && findEpisode(southPark, genEp.id)!.cast.every(id => characters[id].groupId === 'south-park'),
+  'an employee plays the admin’s episode with the show they picked',
+)
+const draftLibrary = reducer(admin0, { type: 'PUBLISH_EPISODE', episode: genEp, status: 'draft' }).published
+ok(
+  lineupFor('south-park', draftLibrary).every(e => e.episode.id !== genEp.id) &&
+    reducer({ ...employee0, published: draftLibrary }, { type: 'SELECT_EPISODE', episodeId: genEp.id }).view !== 'intro',
+  'drafts stay invisible and unplayable for employees',
+)
+ok(reducer({ ...admin0, published: draftLibrary }, { type: 'SELECT_EPISODE', episodeId: genEp.id }).view === 'intro', 'an admin can preview a draft')
+const recommended = recommendNext(lineupFor('family-guy', liveLibrary), ['social_engineering', 'incident_reporting'], firstDay.id)
+ok(recommended?.entry.episode.id === genEp.id && recommended.covers.length > 0, 'results recommend the published episode that covers the weakness, never the one just played')
 const invalid = structuredClone(genEp)
 invalid.scenes.g_d1.choices![0].consequenceSceneId = 'nowhere'
 ok(reducer(base0, { type: 'PUBLISH_EPISODE', episode: invalid, status: 'published' }) === base0, 'an invalid generated graph is refused at publish')
@@ -748,7 +848,15 @@ section('MEDIA SERVER · STORAGE + HONEST CONFIG')
 const assetRoot = mkdtempSync(path.join(tmpdir(), 'onboard-assets-'))
 const mediaPort = 8900 + Math.floor(Math.random() * 90)
 const media = spawn(process.execPath, ['server/mediaServer.mjs'], {
-  env: { ...process.env, MEDIA_SERVER_PORT: String(mediaPort), REPLICATE_API_TOKEN: '', ASSET_ROOT: assetRoot, VOICE_PROXY_PORT: '1' },
+  env: {
+    ...process.env,
+    MEDIA_SERVER_PORT: String(mediaPort),
+    REPLICATE_API_TOKEN: '',
+    SUPABASE_URL: '',
+    ASSET_ROOT: assetRoot,
+    CONTENT_DB_PATH: path.join(assetRoot, 'content.db'),
+    VOICE_PROXY_PORT: '1',
+  },
   stdio: 'ignore',
 })
 const mediaBase = `http://localhost:${mediaPort}/api/media`
@@ -772,6 +880,27 @@ try {
   ok((await post('knowledge', { docId: '../../etc', text: 'x' })).status === 400, 'path-shaped ids are rejected')
   const traversal = await fetch(`http://localhost:${mediaPort}/api/media/assets/..%2F..%2Fpackage.json`)
   ok(traversal.status === 400 || traversal.status === 404, `asset paths cannot escape the storage root (${traversal.status})`)
+
+  const localHealth = (health as unknown as { content: { kind: string; episodes?: boolean }; storage: { kind: string } }) ?? null
+  ok(localHealth?.content.kind === 'sqlite' && localHealth.storage.kind === 'local-disk' && localHealth.content.episodes === true, 'without Supabase, content falls back to SQLite and assets to local disk')
+  const liveEpisode = { ...phishing.episode, provenance: { ...phishing.episode.provenance!, status: 'published' as const } }
+  ok((await post('episodes', { episode: liveEpisode })).ok, 'a published episode is saved to the library')
+  ok((await post('episodes', { episode: { ...liveEpisode, provenance: { ...liveEpisode.provenance, status: 'shipped' } } })).status === 400, 'an episode without a draft/published status is refused')
+  const listed = (await (await fetch(`${mediaBase}/episodes`)).json()) as { episodes: Episode[] }
+  ok(listed.episodes.length === 1 && listed.episodes[0].id === liveEpisode.id && Object.keys(listed.episodes[0].scenes).length === Object.keys(liveEpisode.scenes).length, 'the library lists it back intact')
+  ok((await fetch(`${mediaBase}/episodes/${liveEpisode.id}`, { method: 'DELETE' })).ok, 'unpublishing deletes it from the library')
+  ok(((await (await fetch(`${mediaBase}/episodes`)).json()) as { episodes: Episode[] }).episodes.length === 0, 'and it is gone for every browser')
+
+  await post('content/docs', { id: 'doc-x', name: 'Uploaded policy' })
+  await post('content/knowledge', { items: [{ id: 'K-DOC-X-01', rule: 'a' }, { id: 'K-DOC-X-02', rule: 'b' }] })
+  const removedDoc = await fetch(`${mediaBase}/content/docs/doc-x`, { method: 'DELETE' })
+  const removedItems = (await (await post('content/knowledge/remove', { ids: ['K-DOC-X-01', '../etc'] })).json()) as { removed: number }
+  const docsLeft = ((await (await fetch(`${mediaBase}/content/docs`)).json()) as { docs: { id: string }[] }).docs
+  const itemsLeft = ((await (await fetch(`${mediaBase}/content/knowledge`)).json()) as { items: { id: string }[] }).items
+  ok(
+    removedDoc.ok && removedItems.removed === 1 && docsLeft.length === 0 && itemsLeft.map((k) => k.id).join() === 'K-DOC-X-02',
+    'an uploaded document and chosen knowledge items can be removed (unsafe ids ignored)',
+  )
 } finally {
   media.kill()
   rmSync(assetRoot, { recursive: true, force: true })
@@ -819,7 +948,9 @@ const replicateMedia = spawn(process.execPath, ['server/mediaServer.mjs'], {
     MEDIA_SERVER_PORT: String(replicatePort),
     REPLICATE_API_TOKEN: FAKE_TOKEN,
     REPLICATE_API_BASE: `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}/v1`,
+    SUPABASE_URL: '',
     ASSET_ROOT: replicateRoot,
+    CONTENT_DB_PATH: path.join(replicateRoot, 'content.db'),
     VOICE_PROXY_PORT: '1',
   },
   stdio: 'ignore',
@@ -891,11 +1022,163 @@ ok(replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length === 2, '
   const clientDone = await awaitClip(clientJob, client, { sleep: async () => {} })
   const clientAsset = clipToAsset(clientDone)
   ok(clientAsset?.tier === 'generated' && clientAsset.storageKey === 'company/episodes/gen-test/videos/g_d1.mp4', 'the browser-side provider drives the same server contract to a stored clip asset')
+
+  const wanCalls = () => replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length
+  const fluxCalls = () => replicateSeen.filter(r => r.url.includes('flux-schnell')).length
+  const wanBefore = wanCalls()
+  const again = await readBack(await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'Slow push-in toward the character.', imageKey: imgBody.storageKey }))
+  ok(again.status === 'ready' && again.reused === true && again.storageKey === latest.storageKey && wanCalls() === wanBefore, 'a clip already in storage is reused — no new Replicate prediction')
+  const imgAgain = await readBack(await rPost('image', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'A glass lobby at dawn.' }))
+  ok(imgAgain.reused === true && fluxCalls() === 1, 'a scene image already in storage is reused')
+  const forced = await readBack(await rPost('video', { episodeId: 'gen-test', sceneId: 'g_open', prompt: 'Slow push-in.', imageKey: imgBody.storageKey, force: true }))
+  ok(forced.status === 'queued' && !forced.reused && wanCalls() === wanBefore + 1, 'force: true (re-render) pays for a new prediction')
   ok(toBrowser.every(b => !b.includes(FAKE_TOKEN)), 'the token never appears in any response the browser can see')
 } finally {
   replicateMedia.kill()
-  fakeReplicate.close()
   rmSync(replicateRoot, { recursive: true, force: true })
+}
+
+/* ------------------------------------------------ fake Supabase */
+section('MEDIA SERVER · SUPABASE STORAGE + CONTENT (fake Supabase API, no network)')
+const FAKE_SUPABASE_KEY = 'sb_secret_fake_key_for_tests_only'
+const buckets = new Map<string, { type: string; body: Buffer }>()
+const supaTables: Record<string, Map<string, { id: string; data: unknown; status?: string }>> = { episodes: new Map(), source_docs: new Map(), knowledge_items: new Map() }
+const supaSeen: { method: string; path: string; apikey?: string; auth?: string }[] = []
+const fakeSupabase = createServer(async (req, res) => {
+  const chunks: Buffer[] = []
+  for await (const c of req) chunks.push(c as Buffer)
+  const body = Buffer.concat(chunks)
+  const url = new URL(req.url ?? '/', 'http://fake')
+  supaSeen.push({ method: req.method ?? '', path: url.pathname, apikey: req.headers.apikey as string | undefined, auth: req.headers.authorization })
+  const reply = (status: number, obj?: unknown) => {
+    res.writeHead(status, { 'content-type': 'application/json' })
+    res.end(obj === undefined ? '' : JSON.stringify(obj))
+  }
+  const pub = /^\/storage\/v1\/object\/public\/(.+)$/.exec(url.pathname)
+  if (pub) {
+    // Only the public bucket is readable without a key.
+    const id = decodeURIComponent(pub[1])
+    const o = id.startsWith('dayone-assets/') ? buckets.get(id) : undefined
+    if (!o) return reply(400, { error: 'not_found' })
+    res.writeHead(200, { 'content-type': o.type })
+    return res.end(req.method === 'HEAD' ? undefined : o.body)
+  }
+  if (req.headers.apikey !== FAKE_SUPABASE_KEY) return reply(401, { message: 'Invalid API key' })
+  const obj = /^\/storage\/v1\/object\/(.+)$/.exec(url.pathname)
+  if (obj) {
+    const id = decodeURIComponent(obj[1])
+    if (req.method === 'POST') {
+      buckets.set(id, { type: String(req.headers['content-type']), body })
+      return reply(200, { Key: id })
+    }
+    if (req.method === 'DELETE') {
+      buckets.delete(id)
+      return reply(200, { message: 'Successfully deleted' })
+    }
+    const o = buckets.get(id)
+    if (!o) return reply(400, { error: 'not_found' })
+    res.writeHead(200, { 'content-type': o.type })
+    return res.end(o.body)
+  }
+  const table = supaTables[/^\/rest\/v1\/(\w+)$/.exec(url.pathname)?.[1] ?? '']
+  if (!table) return reply(404, { message: 'relation does not exist' })
+  if (req.method === 'GET') return reply(200, [...table.values()].map(r => ({ data: r.data })))
+  if (req.method === 'POST') {
+    for (const r of JSON.parse(body.toString('utf8'))) table.set(r.id, r)
+    return reply(201)
+  }
+  if (req.method === 'DELETE') {
+    table.delete((url.searchParams.get('id') ?? '').replace(/^eq\./, ''))
+    return reply(204)
+  }
+  reply(405)
+})
+await new Promise<void>((r) => fakeSupabase.listen(0, '127.0.0.1', () => r()))
+const supaUrl = `http://127.0.0.1:${(fakeSupabase.address() as AddressInfo).port}`
+const supaRoot = mkdtempSync(path.join(tmpdir(), 'onboard-supabase-'))
+const supaPort = 9200 + Math.floor(Math.random() * 90)
+const supaMedia = spawn(process.execPath, ['server/mediaServer.mjs'], {
+  env: {
+    ...process.env,
+    MEDIA_SERVER_PORT: String(supaPort),
+    REPLICATE_API_TOKEN: FAKE_TOKEN,
+    REPLICATE_API_BASE: `http://127.0.0.1:${(fakeReplicate.address() as AddressInfo).port}/v1`,
+    SUPABASE_URL: supaUrl,
+    SUPABASE_SECRET_KEY: FAKE_SUPABASE_KEY,
+    ASSET_ROOT: supaRoot,
+    CONTENT_DB_PATH: path.join(supaRoot, 'content.db'),
+    VOICE_PROXY_PORT: '1',
+  },
+  stdio: 'ignore',
+})
+const sBase = `http://localhost:${supaPort}/api/media`
+const sSeen: string[] = []
+const sRead = async (r: Response) => {
+  const t = await r.text()
+  sSeen.push(t)
+  return JSON.parse(t)
+}
+const sPost = (route: string, body: unknown) => fetch(`${sBase}/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+const storedLocally = (key: string) => {
+  try {
+    readFileSync(path.join(supaRoot, key))
+    return true
+  } catch {
+    return false
+  }
+}
+try {
+  let sHealth: { content: { kind: string; episodes?: boolean }; storage: { kind: string; bucket?: string } } | null = null
+  for (let i = 0; i < 50 && !sHealth; i++) {
+    await new Promise(r => setTimeout(r, 100))
+    try { sHealth = await sRead(await fetch(`${sBase}/health`)) } catch { /* not up yet */ }
+  }
+  ok(sHealth?.content.kind === 'supabase' && sHealth.storage.kind === 'supabase' && sHealth.storage.bucket === 'dayone-assets', 'with a Supabase secret key, content and storage report Supabase')
+
+  const doc = await sRead(await sPost('knowledge', { docId: 'security-notes', text: 'Report it.' }))
+  const privateDoc = buckets.get('dayone-private/company/knowledge/security-notes.txt')
+  ok(privateDoc?.body.toString('utf8') === 'Report it.' && privateDoc.type === 'text/plain' && !doc.url, 'extracted policy text goes to the private bucket, with no public URL')
+
+  const sImg = await sRead(await sPost('image', { episodeId: 'gen-supa', sceneId: 'g_open', prompt: 'A glass lobby at dawn.' }))
+  ok(
+    String(sImg.url).startsWith(`${supaUrl}/storage/v1/object/public/dayone-assets/company/episodes/gen-supa/backgrounds/g_open.jpg`) &&
+      buckets.get('dayone-assets/company/episodes/gen-supa/backgrounds/g_open.jpg')?.body.toString('utf8') === 'FAKEJPEG',
+    'a generated scene image is uploaded to the public bucket and served from its URL',
+  )
+  const wanBeforeSupa = replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length
+  let sVid = await sRead(await sPost('video', { episodeId: 'gen-supa', sceneId: 'g_open', prompt: 'Slow push-in.', imageKey: sImg.storageKey }))
+  const sInput = replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).at(-1)?.body?.input ?? {}
+  ok(sVid.status === 'queued' && sInput.image === `data:image/jpeg;base64,${Buffer.from('FAKEJPEG').toString('base64')}`, 'Wan receives the keyframe read back from the bucket')
+  for (let i = 0; i < 10 && !['ready', 'failed'].includes(sVid.status); i++) sVid = await sRead(await fetch(`${sBase}/video/${sVid.jobId}`))
+  ok(
+    sVid.status === 'ready' && buckets.get('dayone-assets/company/episodes/gen-supa/videos/g_open.mp4')?.body.toString('utf8') === 'FAKEMP4' && String(sVid.url).includes('/object/public/dayone-assets/'),
+    'the finished clip is uploaded to the bucket',
+  )
+  const sAgain = await sRead(await sPost('video', { episodeId: 'gen-supa', sceneId: 'g_open', prompt: 'Slow push-in.', imageKey: sImg.storageKey }))
+  ok(sAgain.status === 'ready' && sAgain.reused === true && replicateSeen.filter(r => r.url.includes('wan-2.2-i2v-fast')).length === wanBeforeSupa + 1, 'a clip already in the bucket is reused, not re-rendered')
+  ok(!storedLocally('company/episodes/gen-supa/videos/g_open.mp4') && !storedLocally('content.db'), 'nothing is written to local disk when Supabase is configured')
+
+  ok((await sPost('content/docs', { id: 'doc-1', name: 'Security policy' })).ok, 'an uploaded document row is saved')
+  ok((await sRead(await fetch(`${sBase}/content/docs`))).docs?.[0]?.name === 'Security policy', 'and read back from Postgres')
+  ok(
+    (await fetch(`${sBase}/content/docs/security-notes`, { method: 'DELETE' })).ok && !buckets.has('dayone-private/company/knowledge/security-notes.txt'),
+    'removing a document deletes its extracted text from the private bucket',
+  )
+  ok((await fetch(`${sBase}/content/docs/doc-1`, { method: 'DELETE' })).ok && supaTables.source_docs.size === 0, 'and its row from Postgres')
+  const sEpisode = { ...phishing.episode, provenance: { ...phishing.episode.provenance!, status: 'published' as const } }
+  ok((await sPost('episodes', { episode: sEpisode })).ok && supaTables.episodes.get(sEpisode.id)?.status === 'published', 'a published episode is upserted into the episodes table with its status')
+  ok((await sRead(await fetch(`${sBase}/episodes`))).episodes?.[0]?.id === sEpisode.id, 'every browser reads the same library')
+  ok((await fetch(`${sBase}/episodes/${sEpisode.id}`, { method: 'DELETE' })).ok && supaTables.episodes.size === 0, 'unpublishing deletes the row')
+
+  const keyed = supaSeen.filter(s => !s.path.includes('/object/public/'))
+  ok(keyed.length > 0 && keyed.every(s => s.apikey === FAKE_SUPABASE_KEY && !s.auth), 'every private Supabase call carries the secret key in apikey (not as a bearer token)')
+  ok(supaSeen.filter(s => s.path.includes('/object/public/')).every(s => !s.apikey), 'public object checks carry no key')
+  ok(sSeen.every(b => !b.includes(FAKE_SUPABASE_KEY) && !b.includes(FAKE_TOKEN)), 'neither secret appears in any response the browser can see')
+} finally {
+  supaMedia.kill()
+  fakeSupabase.close()
+  fakeReplicate.close()
+  rmSync(supaRoot, { recursive: true, force: true })
 }
 
 /* ------------------------------------------------ suggested questions */

@@ -33,6 +33,8 @@ export interface ClipRequest {
   shot: ShotSpec
   /** The generated scene image the clip animates. Required by image-to-video providers. */
   image?: AssetRef
+  /** Render again even if this scene's clip is already in storage. */
+  force?: boolean
 }
 
 export interface ClipJob {
@@ -46,6 +48,8 @@ export interface ClipJob {
   url?: string
   storageKey?: string
   error?: string
+  /** The stored clip was reused rather than rendered again. */
+  reused?: boolean
 }
 
 export interface VideoProvider {
@@ -203,6 +207,7 @@ export class ServerVideoProvider implements VideoProvider {
           prompt,
           imageKey: req.image.storageKey,
           durationSec: clipSeconds(req.shot),
+          force: req.force === true,
         }),
       })
       const body = (await res.json().catch(() => ({}))) as Partial<ClipJob> & { jobId?: string; message?: string }
@@ -214,6 +219,7 @@ export class ServerVideoProvider implements VideoProvider {
         url: body.url,
         storageKey: body.storageKey,
         error: body.error,
+        reused: body.reused === true,
       }
       this.jobs.set(job.id, job)
       return job
@@ -275,7 +281,7 @@ export function videoProvider(): VideoProvider {
  */
 export function requestClip(
   shot: ShotSpec,
-  ctx: { episodeId: string; sceneId: string; image?: AssetRef },
+  ctx: { episodeId: string; sceneId: string; image?: AssetRef; force?: boolean },
   provider: VideoProvider = videoProvider(),
 ): Promise<ClipJob> {
   return provider.generateClip({ ...ctx, shot })

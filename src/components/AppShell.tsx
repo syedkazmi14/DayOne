@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { characterGroups } from '@/content/characterGroups'
-import { playableCount } from '@/content/episodes'
 import { useGame, type View } from '@/engine/gameStore'
 import { applyTheme, BASE, channelsToHex, getTheme, loadThemeId, saveThemeId, themeSwatch, THEMES } from '@/theme/themes'
 import { FilmOverlay } from './ui/Grain'
@@ -10,8 +9,9 @@ import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
 /* ============================================================================
  * Chrome. Present everywhere except inside a scene, where the frame is the UI.
  *
- * Type only — no icons. The nav sits over the page on a long fade rather than
- * in a bar of its own, so the artwork behind it is never cut by an edge.
+ * The nav is type only — no icons — and sits over the page on a long fade
+ * rather than in a bar of its own, so the artwork behind it is never cut by
+ * an edge. The wordmark is the one exception: a fixed image, not a font.
  *
  * The chrome cross-fades on the same curve and duration as the screen swap in
  * App.tsx. `inScene` flips synchronously on dispatch while AnimatePresence
@@ -22,11 +22,13 @@ import { ProfileAvatar, titleCase } from './ui/ProfileAvatar'
 
 /* No 'Profile' entry: the avatar at the right of the header is the profile
  * affordance, and two controls for one destination is noise. */
-const NAV: { view: View; label: string; admin?: true }[] = [
+/* Employees play; admins build. An admin has no show and no lobby, so the
+ * Studio is their only destination — and employees never see it. */
+const NAV_EMPLOYEE: { view: View; label: string }[] = [
   { view: 'home', label: 'Episodes' },
   { view: 'shop', label: 'Shop' },
-  { view: 'authoring', label: 'Studio', admin: true },
 ]
+const NAV_ADMIN: { view: View; label: string }[] = [{ view: 'authoring', label: 'Studio' }]
 
 /** Matches App.tsx's screen transition, so chrome and content move together. */
 const CHROME_FADE = { duration: 0.42, ease: [0.16, 1, 0.3, 1] } as const
@@ -34,6 +36,8 @@ const FADE = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { state, dispatch, group } = useGame()
+  const isAdmin = state.session?.role === 'admin'
+  const NAV = isAdmin ? NAV_ADMIN : NAV_EMPLOYEE
   /* The cinematic screens carry their own chrome — a second header would
    * collide with their own back button and break the full-bleed frame. Sign-in
    * and the show picker have no chrome at all: offering Episodes / Shop /
@@ -153,15 +157,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }`}
           >
             <button className="shrink-0" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
-              <span className="font-sans text-[19px] font-semibold tracking-[-0.015em] text-bone">DayOne</span>
+              <img src="/wordmark.png" alt="DayOne" className="h-[22px] w-auto" />
             </button>
 
             <nav className="no-scrollbar flex min-w-0 flex-1 items-center justify-end gap-0.5 overflow-x-auto">
               {/* Filtered, not hidden: an employee's DOM should contain no
                 * Studio button at all, not one dimmed or styled away — the
-                * real boundary is the GOTO reducer case in gameStore, and this
-                * filter just keeps a control nobody can use off the screen. */}
-              {NAV.filter((item) => !item.admin || state.session?.role === 'admin').map(({ view, label }) => (
+                * real boundary is the GOTO reducer case in gameStore, and the
+                * list above just keeps a control nobody can use off the screen. */}
+              {NAV.map(({ view, label }) => (
                 <button
                   key={view}
                   onClick={() => dispatch({ type: 'GOTO', view })}
@@ -215,6 +219,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       * preference rather than a destination, which is what puts
                       * it here rather than in the nav. Chosen once at
                       * onboarding; this is where it gets changed. */}
+                    {/* Admins have no show to change. */}
+                    {!isAdmin && (
+                    <>
                     <div className="relative" {...subProps('shows')}>
                       <button
                         role="menuitem"
@@ -263,11 +270,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                                     }}
                                   />
                                   <span className={active ? 'text-bone' : 'text-bone-dim'}>{g.name}</span>
-                                  {playableCount(g.id) === 0 && (
-                                    <span className="ml-auto shrink-0 font-sans text-[11px] text-bone-faint">
-                                      In production
-                                    </span>
-                                  )}
                                 </button>
                               )
                             })}
@@ -341,6 +343,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </div>
 
                     <div role="separator" className="my-1 h-px bg-bone/10" />
+                    </>
+                    )}
 
                     <button
                       role="menuitem"

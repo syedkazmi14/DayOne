@@ -28,6 +28,17 @@ dom.window.localStorage.setItem(
 )
 g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16) as unknown as number
 g.cancelAnimationFrame = (id: number) => clearTimeout(id)
+// framer-motion's shared layout animation (the Studio rail's sliding
+// underline, layoutId="studio-rail-active") measures elements with
+// ResizeObserver and getBoundingClientRect, neither of which jsdom implements
+// meaningfully — every rect comes back zeroed and there is no ResizeObserver
+// at all. Without a stand-in the projection system never resolves, and
+// AnimatePresence (mode="wait") never fires its exit-complete for a screen
+// that used that layout animation, wedging navigation AWAY from the Studio.
+g.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
+dom.window.ResizeObserver = g.ResizeObserver as never
+dom.window.Element.prototype.getBoundingClientRect = () =>
+  ({ x: 0, y: 0, top: 0, left: 0, bottom: 100, right: 100, width: 100, height: 100, toJSON() {} }) as DOMRect
 g.IS_REACT_ACT_ENVIRONMENT = true
 dom.window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as never
 // Speech: resolve instantly so subtitle pacing does not stall the harness.
@@ -60,9 +71,11 @@ const has = (s: string) => body().toLowerCase().includes(s.toLowerCase())
  * — and the suite should drive what a user (or a screen reader) can actually
  * reach, not just what happens to render as a label.
  */
-function findByText(needle: string, tag = 'button'): HTMLElement | null {
+function findByText(needle: string, tag = 'button', opts: { excludeSelector?: string } = {}): HTMLElement | null {
   const n = needle.toLowerCase()
-  const els = [...document.querySelectorAll<HTMLElement>(tag)]
+  const excluded = opts.excludeSelector ? [...document.querySelectorAll<HTMLElement>(opts.excludeSelector)] : []
+  const isExcluded = (e: HTMLElement) => excluded.some((x) => x.contains(e))
+  const els = [...document.querySelectorAll<HTMLElement>(tag)].filter((e) => !isExcluded(e))
   return (
     els.find((e) => (e.textContent ?? '').toLowerCase().trim().includes(n)) ??
     els.find((e) => (e.getAttribute('aria-label') ?? '').toLowerCase().includes(n)) ??
@@ -76,8 +89,8 @@ async function openProfile() {
   return click('profile')
 }
 
-async function click(needle: string, tag = 'button', label = needle) {
-  const el = findByText(needle, tag)
+async function click(needle: string, tag = 'button', label = needle, opts: { excludeSelector?: string } = {}) {
+  const el = findByText(needle, tag, opts)
   if (!el) { fails++; console.log(`  ✗ could not find ${tag} "${label}"`); return false }
   await act(async () => { el.click(); await sleep(80) })
   return true
@@ -120,10 +133,7 @@ const showTiles = ['Rick and Morty', 'South Park', 'Family Guy', 'The Simpsons']
   (n) => buttonsWith(n).length > 0,
 )
 ok(showTiles.length === 4, `all four shows offered (got ${showTiles.length})`)
-ok(
-  [...document.querySelectorAll('button')].filter((b) => b.textContent?.includes('In production')).length === 3,
-  'the three shows with no playable episode say so',
-)
+ok(!has('In production') && buttonsWith('1 episode').length === 4, 'every show plays the same lineup — no show is "in production"')
 
 await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(150) })
 await flush(150)
@@ -144,9 +154,9 @@ await act(async () => { buttonsWith('Rick and Morty')[0].click(); await sleep(15
 await flush(150)
 
 console.log('\n=== 1. HOME / EPISODE SELECT ===')
-ok(has('DayOne'), 'wordmark renders')
+ok(!!document.querySelector('img[src="/wordmark.png"]'), 'wordmark renders')
 ok(has('FIRST'), 'featured episode title')
-ok(has('THE CLIENT') && has('THE DEADLINE'), 'locked episodes on the shelf')
+ok(!has('THE CLIENT') && !has('THE DEADLINE'), 'placeholder episodes are gone — the shelf is playable episodes only')
 ok(has('Rick and Morty'), 'selected roster named in the hero')
 ok(has('RICK') && has('MORTY') && has('SUMMER') && has('JERRY'), 'cast switcher shows the four portraits')
 ok(document.querySelectorAll('img[src^="/characters/"]').length === 4, 'exactly the selected roster is rendered — no big card section')
@@ -187,24 +197,20 @@ ok(showRows().length === 0, 'the shows stay behind it — the menu is not four r
 await clickEl(menuItem('Change show')!, 80)
 ok(showRows().length === 4, `opening it lists all four shows (got ${showRows().length})`)
 ok(showRows().filter((b) => b.getAttribute('aria-checked') === 'true').length === 1, 'the current show is marked, exactly once')
-ok(
-  showRows().filter((b) => b.textContent?.includes('In production')).length === 3,
-  'the flyout labels the shows with nothing playable',
-)
+ok(showRows().every((b) => !b.textContent?.includes('In production')), 'no show in the flyout is labelled in production')
 
 await clickEl(showRows().find((b) => b.textContent?.includes('South Park'))!, 150)
 ok(!document.querySelector('[role="menu"]'), 'the menu closes on choosing, even though the view did not change')
 ok(has('South Park'), 'menu switched to South Park')
-ok(has('THE GROUP CHAT'), 'episode shelf followed the show')
-ok(!has('THE CLIENT'), 'the previous show’s episodes left the shelf')
+ok(has('FIRST') && buttonsWith('Start episode').length > 0, 'South Park plays the same First Day, and it is playable')
 ok(has('CARTMAN') || has('ERIC'), 'cast strip shows the new cast')
 ok(localStorage.getItem('onboard.group.v1') === 'south-park', 'the new show is persisted too')
 
 await pickShow('The Simpsons')
-ok(has('The Simpsons') && has('SECTOR 7-G'), 'every show is one click away — no cycling')
+ok(has('The Simpsons') && has('FIRST'), 'every show is one click away — no cycling')
 
 await pickShow('Rick and Morty')
-ok(has('Rick and Morty') && has('THE CLIENT'), 'back on Rick and Morty')
+ok(has('Rick and Morty') && has('FIRST'), 'back on Rick and Morty')
 
 // selecting a character marks it
 const first = portraits()[0]
@@ -243,7 +249,8 @@ ok(sawSpeaker, 'character speaker labels appeared during the scene')
 console.log('\n=== 4. RISK TERMINAL ===')
 ok(has('MAKE YOUR CALL'), 'wager terminal opened before the decision')
 ok(has('1.2×') && has('2×') && has('4×'), 'three fixed bets: SAFE 1.2× · RISKY 2× · ALL IN 4×')
-ok(has('no real money'), 'virtual-currency disclaimer present')
+ok(!has('no real money'), 'no disclaimer footer on the wager screen')
+ok(!!findByText('no bet'), 'no bet is offered as a full choice')
 ok(!has('estimate'), 'the mastery estimate stays hidden until the world reacts')
 await click('RISKY')
 await flush(150)
@@ -430,7 +437,9 @@ await click('sign out')
 await flush(150)
 await click('Company admin?')
 await click('Company SSO')
-await flush(200)
+await flush(300)
+/* Kept from main: admins have no lobby, so the picker is skipped entirely. */
+ok(!has('Pick your show'), 'admins skip the show picker')
 ok(has('studio') && has('Episode builder'), 'signing in as an admin lands straight on the Studio')
 
 /* Step 1 now starts empty: an admin's own documents are the point, and the
@@ -438,7 +447,9 @@ ok(has('studio') && has('Episode builder'), 'signing in as an admin lands straig
  * the only material that extracts without a language model, which is why the
  * rest of this section can run offline at all. */
 ok(!has('Helix Security Handbook'), 'the first step starts empty, with no fixture documents pre-loaded')
-ok(!has('02') && !has('Pick a topic'), 'steps past the current one are not announced')
+/* The rail names every step so the shape of the wizard reads at a glance;
+ * what must not appear is a future step's CONTENT. */
+ok(!has('Pick a topic with enough rules'), "a later step's content is not rendered, only its name in the rail")
 await click('load demo content')
 await flush(150)
 ok(has('Helix Security Handbook'), 'demo corpus loads on request')
@@ -446,13 +457,14 @@ ok(has('run knowledge agent'), 'pipeline can be run')
 
 console.log('\n=== 11b. STUDIO: KNOWLEDGE → EPISODE → ASSETS → PUBLISH → PLAY ===')
 await click('run knowledge agent')
-/* Extraction finishing is the same event that flips step 1 to 'done', which
- * auto-advances the cursor away from it — the live '14 knowledge items'
- * counter is only rendered while step 1 is open, so it can race the collapse
- * and disappear before this ever polls it. Step 1's collapsed summary row
- * (`${n} rules · ${docs} documents`) says the same thing and survives the
- * step moving on, so check that instead. */
-ok(await waitFor(() => has('14 rules · 5 documents')), 'knowledge agent extracted 14 citable rules')
+/* Extraction finishing flips step 1 to 'done', which auto-advances off it, so
+ * the live counter inside step 1 can vanish before this ever polls it. The
+ * per-step summary now lives on the rail as its title, which outlives the
+ * step moving on. */
+ok(
+  await waitFor(() => document.querySelector('[aria-label="Step 1, done"]')?.getAttribute('title') === '14 rules · 5 documents'),
+  'knowledge agent extracted 14 citable rules',
+)
 /* Auto-advance is asserted, not assumed: step 2's topic buttons only exist in
  * the DOM once the wizard opens that step on its own. */
 ok(await waitFor(() => !!findByText('Workplace safety')), 'auto-advance opened the topic step once extraction finished')
@@ -502,7 +514,13 @@ await openStudioStep('Generate images')
 ok(has('procedural previs') && !has('ai generated · stored'), 'no video key: every clip is procedural previs, none claims to be AI')
 
 await click('next →') // step 5 -> step 6
-await click('generate voice')
+/* 'generate voice' is a prefix of the rail's own step-6 label, 'Generate
+ * voices' — a plain text search would hit that nav chip first (it sits
+ * earlier in the DOM, in the header) and silently navigate instead of
+ * running the pass, leaving this step's rows empty forever. Excluding the
+ * rail is what a person clicking the button they can see, not the nav
+ * above it, actually does. */
+await click('generate voice', 'button', 'generate voice', { excludeSelector: 'nav[aria-label="Studio steps"]' })
 ok(await waitFor(() => stepDone(6)), 'voice generation completed')
 await flush(150)
 await openStudioStep('Generate voices')
@@ -537,6 +555,8 @@ ok(localStorage.getItem('onboard.setup.v1') === 'true', 'finishing setup persist
 
 await click('play it')
 await flush(250)
+await flush(500)
+ok(await waitFor(() => has('start episode'), 8000), 'intro eventually shows (extra wait)')
 ok(has('generated episode') && has('validated graph'), 'intro shows generated provenance')
 await click('start episode')
 await flush(250)
@@ -553,7 +573,24 @@ ok(has('what actually happened') && has('K-'), 'generated consequence teaches wi
 const exitBtn = document.querySelector<HTMLElement>('button[aria-label="Exit episode"]')
 if (exitBtn) await act(async () => { exitBtn.click(); await sleep(200) })
 await flush(300)
-ok(has("generated from your company's material"), 'the published episode sits on the home shelf')
+ok(has('Episode builder'), 'an admin leaving a preview returns to the Studio, not a show lobby')
+
+console.log('\n=== 11c. EMPLOYEE: THE ADMIN’S EPISODE, IN THE SHOW THEY PICKED ===')
+await click('account menu')
+await click('sign out')
+await flush(150)
+await click('Company SSO')
+await flush(200)
+ok(has('Pick your show') && buttonsWith('2 episodes').length === 4, 'every show now offers the published topic alongside First Day')
+await act(async () => { buttonsWith('Family Guy')[0].click(); await sleep(150) })
+await flush(250)
+ok(has('THE SUSPICIOUS REQUEST') && has("From your company's material"), 'the admin-built episode is on the employee shelf')
+await clickEl(buttonsWith('THE SUSPICIOUS REQUEST')[0], 250)
+ok(has('BRIAN GRIFFIN') && has('PETER GRIFFIN') && !has('SUMMER SMITH') && !has('RICK SANCHEZ'), 'the employee plays it with the Family Guy cast')
+await click('episodes')
+await flush(250)
+await pickShow('Rick and Morty')
+ok(has('Rick and Morty') && has('FIRST'), 'back on Rick and Morty for the second run')
 
 /* Sections 12+ replay the ORIGINAL episode as the ordinary player this suite
  * has been all along — switch back rather than carrying the admin session
@@ -642,9 +679,10 @@ console.log('    score shown: ' + (m ? m[1] : '?'))
 ok(!!m && Number(m[1]) < 35, 'bad run scores low')
 
 console.log('\n=== 13. THE LOOP: NEXT EPISODE FROM THE WEAKNESS ===')
-await click('generate my next episode')
-ok(await waitFor(() => has('generated episode'), 8000), 'results generated a new episode from the weakest area and opened it')
-ok(has('personalised before you start'), 'the new episode is adaptive too')
+ok(has('recommended for you'), 'results recommend an admin-built episode aimed at the weakness — employees never generate')
+await click('play recommended episode')
+await flush(300)
+ok(has('generated episode') && has('personalised before you start'), 'the recommendation opens the adaptive admin-built episode')
 
 console.log('\n=== 14. SHOP ===')
 const card = (name: string) =>
@@ -747,6 +785,30 @@ const badges = { ...base, cosmetics: { ...base.cosmetics, ownedItems: ['portal-b
 const worn = badges.cosmetics.ownedItems.reduce((pl: typeof base, id: string) => cos.equip(pl, id), badges)
 ok(worn.cosmetics.equippedBadges.length === cos.MAX_EQUIPPED_BADGES, 'badge slots are capped')
 ok(cos.unequip(worn, 'portal-badge').cosmetics.equippedBadges.length === 2, 'unequip frees a badge slot')
+
+console.log('\n=== 16. ZERO-BALANCE STIPEND ===')
+{
+  const store = await import('../src/engine/gameStore')
+  const { firstDay } = await import('../src/content/episodes')
+  const { ZERO_BALANCE_STIPEND } = await import('../src/engine/risk')
+  const decision = Object.values(firstDay.scenes).find((sc) => sc.kind === 'decision' && sc.allowWager)!
+  const best = decision.choices!.find((c) => c.quality === 'best')!
+  const worse = decision.choices!.find((c) => c.quality !== 'best')!
+  const at = (credits: number) => ({
+    ...store.initialState(),
+    episodeId: firstDay.id,
+    sceneId: decision.id,
+    phase: 'choices' as const,
+    player: { ...store.initialState().player, credits },
+  })
+  const choose = (st: ReturnType<typeof at>, id: string) => store.reducer(st, { type: 'CHOOSE', choiceId: id })
+  const broke = choose(at(0), best.id)
+  ok(broke.player.credits === ZERO_BALANCE_STIPEND, 'a broke player who answers best gets a stipend')
+  ok(choose(at(0), worse.id).player.credits === 0, 'no stipend for a broke player who misses')
+  ok(choose(at(120), best.id).player.credits === 120, 'no stipend for a player who had credits and passed on the bet')
+  const next = store.reducer({ ...broke, sceneId: decision.id, phase: 'dialogue', dialogueIndex: decision.dialogue.length - 1 }, { type: 'ADVANCE_DIALOGUE' })
+  ok(next.phase === 'wager', 'the stipend reopens the wager screen at the next decision')
+}
 
 console.log('\n' + (fails === 0 ? '✅ WALKTHROUGH PASSED' : `❌ ${fails} STEP(S) FAILED`))
 process.exit(fails === 0 ? 0 : 1)

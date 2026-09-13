@@ -1,10 +1,9 @@
 import { motion } from 'framer-motion'
-import { ArrowRight, BrainCircuit, Check, Coins, Minus, Sparkles, User, X } from 'lucide-react'
+import { ArrowRight, BrainCircuit, Check, Coins, Minus, Play, User, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { generateCoachAnalysis, type CoachAnalysis } from '@/ai/coach'
-import { generateEpisode, topicForWeakness } from '@/ai/episodeGenerator'
 import { llmLabel } from '@/ai/llm'
-import { corpusFor } from '@/ai/retrieval'
+import { lineupFor, recommendNext } from '@/engine/lineup'
 import { RunTelemetryPanel } from '../RunTelemetryPanel'
 import { concepts, conceptLabel } from '@/content/knowledge'
 import { useGame } from '@/engine/gameStore'
@@ -21,28 +20,14 @@ const MARK = {
 export function Results() {
   const { state, dispatch, episode } = useGame()
   const [coach, setCoach] = useState<CoachAnalysis | null>(null)
-  const [nextGen, setNextGen] = useState<{ busy: boolean; error?: string }>({ busy: false })
   const decisions = state.decisionsThisEpisode
   const score = state.finalScore ?? 0
-
-  /** Close the loop: weakest concept -> topic -> a new episode for this player's mastery. */
-  async function generateNext() {
-    if (!coach || !episode) return
-    setNextGen({ busy: true })
-    try {
-      const { episode: next, report } = await generateEpisode({
-        topic: topicForWeakness(coach.nextFocus),
-        groupId: episode.groupId,
-        mastery: state.player.mastery,
-        corpus: corpusFor(episode.knowledge),
-      })
-      if (!report.ok) throw new Error(`generated graph failed validation: ${report.errors[0]?.message}`)
-      dispatch({ type: 'PUBLISH_EPISODE', episode: next, status: 'published' })
-      dispatch({ type: 'SELECT_EPISODE', episodeId: next.id })
-    } catch (e) {
-      setNextGen({ busy: false, error: (e as Error).message })
-    }
-  }
+  /* Employees never generate episodes — admins build them in the Studio. The
+   * adaptive loop closes by pointing at the published episode that best covers
+   * this run's weakest concepts, recast into the show this employee picked. */
+  const next = coach
+    ? recommendNext(lineupFor(state.groupId, state.published), coach.nextFocus, episode?.id, state.player.completedEpisodes)
+    : null
 
   useEffect(() => {
     let alive = true
@@ -216,10 +201,12 @@ export function Results() {
         <Rule label="next" />
 
         <div className="mt-8 flex flex-wrap items-center gap-3">
-          <Btn onClick={() => void generateNext()} disabled={!coach || nextGen.busy}>
-            <Sparkles size={13} />
-            {nextGen.busy ? 'generating…' : 'generate my next episode'}
-          </Btn>
+          {next && (
+            <Btn onClick={() => dispatch({ type: 'SELECT_EPISODE', episodeId: next.entry.episode.id })}>
+              <Play size={13} fill="currentColor" />
+              play recommended episode
+            </Btn>
+          )}
           <Btn variant="outline" onClick={() => dispatch({ type: 'GOTO', view: 'home' })}>
             episodes <ArrowRight size={13} />
           </Btn>
@@ -227,12 +214,17 @@ export function Results() {
             <User size={13} /> Employee profile
           </Btn>
         </div>
-        {coach && !nextGen.error && (
+        {coach && (
           <p className="mt-3 font-mono text-[9.5px] uppercase tracking-[0.14em] text-bone-faint">
-            built from your weakest area · {coach.nextFocus.map((c) => conceptLabel(c).toLowerCase()).join(' + ')}
+            {next
+              ? `recommended for you · ${next.entry.episode.title} · ${
+                  next.covers.length
+                    ? `covers ${next.covers.map((c) => conceptLabel(c).toLowerCase()).join(' + ')}`
+                    : 'next in your library'
+                }`
+              : `nothing in your library targets ${coach.nextFocus.map((c) => conceptLabel(c).toLowerCase()).join(' + ')} yet — your admin can build it in the Studio`}
           </p>
         )}
-        {nextGen.error && <p className="mt-3 font-mono text-[10px] text-danger">{nextGen.error}</p>}
       </div>
     </div>
   )

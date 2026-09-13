@@ -13,7 +13,7 @@ export interface MediaHealth {
   image: { configured: boolean; provider: string; model: string }
   audio: { configured: boolean; provider: string }
   /** Whether uploaded documents and extracted knowledge persist across a reload. */
-  content: { configured: boolean; kind: string }
+  content: { configured: boolean; kind: string; episodes?: boolean }
   storage: { kind: string; layout: string }
 }
 

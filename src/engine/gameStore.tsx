@@ -1,4 +1,5 @@
-import React, { createContext, useCallback, useContext, useMemo, useReducer } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
+import { loadLibrary, removeFromLibrary, saveToLibrary } from '@/data/episodeStore'
 import { getEpisode as getAuthoredEpisode } from '@/content/episodes'
 import { characterGroups, getGroup } from '@/content/characterGroups'
 import { getCharacter } from '@/content/characters'
@@ -17,7 +18,8 @@ import type {
 } from '@/types'
 import { applyDecision, baselineMastery, episodeScore, levelFromXp, selectVariant } from './adaptive'
 import { awardForDecision, awardForEpisode, equip, freshCosmetics, purchase, unequip } from './cosmetics'
-import { estimateSuccess, resolveWager, wagerOptions, type WagerOption, type WagerTier } from './risk'
+import { estimateSuccess, resolveWager, wagerOptions, ZERO_BALANCE_STIPEND, type WagerOption, type WagerTier } from './risk'
+import { recastEpisode } from './recast'
 import { validateEpisode } from './validateEpisode'
 
 /* ============================================================================
@@ -45,15 +47,6 @@ export type View =
   | 'shop'
   | 'authoring'
   | 'results'
-
-/**
- * The actual access boundary. AppShell's nav filter hides the Studio button
- * from employees, but hiding a button is cosmetic — someone can still GOTO it
- * directly (a stale link, a replayed action, devtools). This set is what the
- * GOTO reducer case checks, so an employee session cannot land on the Studio
- * no matter how the navigation is attempted.
- */
-const ADMIN_ONLY: ReadonlySet<View> = new Set(['authoring'])
 
 /**
  * Who is using the app. Auth is a deliberate prototype stub — picking a
@@ -326,15 +319,30 @@ export type Action =
   | { type: 'CHAT_TURN'; turn: ChatTurn }
   | { type: 'PUBLISH_EPISODE'; episode: Episode; status: 'draft' | 'published' }
   | { type: 'REMOVE_EPISODE'; episodeId: string }
+  /** The shared library, as the media server returned it. Re-validated here. */
+  | { type: 'HYDRATE_PUBLISHED'; episodes: Episode[] }
   | { type: 'RESET_PROGRESS' }
   | { type: 'BUY_ITEM'; itemId: string }
   | { type: 'EQUIP_ITEM'; itemId: string }
   | { type: 'UNEQUIP_ITEM'; itemId: string }
   | { type: 'FINISH_SETUP' }
 
-/** Authored episodes first — a generated graph can never shadow one. */
-export const findEpisode = (state: Pick<GameState, 'published'>, id: string | null | undefined): Episode | undefined =>
-  id ? (getAuthoredEpisode(id) ?? state.published[id]) : undefined
+/**
+ * The episode as THIS player sees it. Authored episodes first — a generated
+ * graph can never shadow one — then recast into the chosen show. Scenes,
+ * choices, transitions and scoring are identical in every show; only who says
+ * the lines changes, so nothing below needs to know which show is playing.
+ */
+export const findEpisode = (
+  state: Pick<GameState, 'published' | 'groupId'>,
+  id: string | null | undefined,
+): Episode | undefined => {
+  const canonical = id ? (getAuthoredEpisode(id) ?? state.published[id]) : undefined
+  return canonical && recastEpisode(canonical, state.groupId)
+}
+
+/** Admins build episodes in the Studio; employees play them. Nothing else is gated. */
+const isAdmin = (state: Pick<GameState, 'session'>) => state.session?.role === 'admin'
 
 /** Enter a scene, resolving adaptive variant slots deterministically. */
 function enterScene(state: GameState, ep: Episode, sceneId: string): GameState {
@@ -381,15 +389,16 @@ export function reducer(state: GameState, action: Action): GameState {
   const scene: Scene | undefined = ep && state.sceneId ? ep.scenes[state.sceneId] : undefined
 
   switch (action.type) {
-    case 'GOTO':
+    case 'GOTO': {
       /* Every destination is behind the sign-in gate. */
       if (!state.session) return state
-      /* The nav filter in AppShell only hides the Studio button — that is
-       * cosmetic. This is the real boundary: an employee dispatching GOTO
-       * authoring directly (stale link, replayed action, devtools) is refused
-       * here regardless of how the dispatch was reached. */
-      if (ADMIN_ONLY.has(action.view) && state.session.role !== 'admin') return state
-      return { ...state, view: action.view }
+      /* The Studio is the admin's; employees cannot reach it by any route. */
+      if (action.view === 'authoring' && !isAdmin(state)) return state
+      /* An admin has no show and no lobby — their home is the Studio, so every
+       * "back to episodes" (leaving a preview, the wordmark) lands there. */
+      const lobby = action.view === 'home' || action.view === 'pickshow' || action.view === 'shop'
+      return { ...state, view: isAdmin(state) && lobby ? 'authoring' : action.view }
+    }
 
     case 'SIGN_IN': {
       const session: Session = { role: action.role, provider: action.provider, signedInAt: Date.now() }
@@ -426,7 +435,10 @@ export function reducer(state: GameState, action: Action): GameState {
     case 'SELECT_EPISODE': {
       const chosen = findEpisode(state, action.episodeId)
       if (!chosen || chosen.locked) return state
-      return { ...state, episodeId: chosen.id, groupId: chosen.groupId, view: 'intro' }
+      // A draft is the admin's to preview; employees only ever see published work.
+      if (chosen.provenance?.status === 'draft' && !isAdmin(state)) return state
+      // The show stays the player's choice: the episode is recast into it, not the other way round.
+      return { ...state, episodeId: chosen.id, view: 'intro' }
     }
 
     case 'START_EPISODE': {
@@ -507,6 +519,8 @@ export function reducer(state: GameState, action: Action): GameState {
           won: verdict === 'win',
         }
       }
+      const stipend = state.player.credits === 0 && choice.quality === 'best' ? ZERO_BALANCE_STIPEND : 0
+      credits += stipend
 
       const record: DecisionRecord = {
         sceneId: scene.id,
@@ -535,7 +549,7 @@ export function reducer(state: GameState, action: Action): GameState {
         lastWager: wager ?? null,
         stagedWager: null,
         decisionsThisEpisode: [...state.decisionsThisEpisode, record],
-        creditsDelta: state.creditsDelta + (wager ? wager.payout - wager.staked : 0),
+        creditsDelta: state.creditsDelta + (wager ? wager.payout - wager.staked : 0) + stipend,
       }
       return enterScene(mid, ep, choice.consequenceSceneId)
     }
@@ -564,7 +578,9 @@ export function reducer(state: GameState, action: Action): GameState {
 
     case 'PUBLISH_EPISODE': {
       const { episode } = action
-      if (getAuthoredEpisode(episode.id) || !validateEpisode(episode).ok) return state
+      if (!isAdmin(state)) return state
+      const vr = validateEpisode(episode)
+      if (getAuthoredEpisode(episode.id) || !vr.ok) return state
       const stamped: Episode = {
         ...episode,
         locked: false,
@@ -575,8 +591,23 @@ export function reducer(state: GameState, action: Action): GameState {
       return { ...state, published }
     }
 
+    case 'HYDRATE_PUBLISHED': {
+      // The shared library replaces this browser's copy. A server is not a
+      // trust boundary either: every graph is validated before it can be played.
+      const valid = (ep: Episode) => {
+        try {
+          return !!ep?.id && !getAuthoredEpisode(ep.id) && validateEpisode(ep).ok
+        } catch {
+          return false
+        }
+      }
+      const published = Object.fromEntries(action.episodes.filter(valid).map((ep) => [ep.id, ep]))
+      savePublished(published)
+      return { ...state, published }
+    }
+
     case 'REMOVE_EPISODE': {
-      if (!state.published[action.episodeId]) return state
+      if (!isAdmin(state) || !state.published[action.episodeId]) return state
       const { [action.episodeId]: _removed, ...published } = state.published
       savePublished(published)
       return { ...state, published }
@@ -656,6 +687,37 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, [scene, state.lastChoice, episode])
 
   const advance = useCallback(() => dispatch({ type: 'ADVANCE_DIALOGUE' }), [])
+
+  /* The episode library is shared through the media server. Load it once; after
+   * that, mirror an admin's publish / unpublish back. Side effects live here so
+   * the reducer stays pure. Until the library loads (or with no media server)
+   * nothing is mirrored and localStorage is the library. */
+  const synced = useRef<Record<string, Episode> | null>(null)
+  const hydrating = useRef(false)
+  useEffect(() => {
+    let cancelled = false
+    void loadLibrary().then((episodes) => {
+      if (cancelled || !episodes) return
+      hydrating.current = true
+      dispatch({ type: 'HYDRATE_PUBLISHED', episodes })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  useEffect(() => {
+    if (hydrating.current) {
+      hydrating.current = false
+      synced.current = state.published
+      return
+    }
+    const before = synced.current
+    if (!before) return
+    synced.current = state.published
+    if (!isAdmin(state)) return
+    for (const [id, ep] of Object.entries(state.published)) if (before[id] !== ep) void saveToLibrary(ep)
+    for (const id of Object.keys(before)) if (!state.published[id]) void removeFromLibrary(id)
+  }, [state.published]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const value = useMemo<Store>(
     () => ({ state, dispatch, episode, scene, group, selectedCharacter, activeConcepts, advance }),

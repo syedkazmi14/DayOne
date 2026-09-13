@@ -1,9 +1,7 @@
 import { motion } from 'framer-motion'
-import { Lock } from 'lucide-react'
 import { characterGroups, groupCast } from '@/content/characterGroups'
-import { featuredEpisode, playableCount } from '@/content/episodes'
 import { useGame } from '@/engine/gameStore'
-import type { CharacterGroup } from '@/types'
+import { lineupFor } from '@/engine/lineup'
 import { Eyebrow } from '../ui/Bits'
 import { CharacterAvatar } from '../ui/CharacterAvatar'
 import { EpisodeStill } from '../ui/EpisodeStill'
@@ -11,36 +9,19 @@ import { EpisodeStill } from '../ui/EpisodeStill'
 /* ============================================================================
  * PICK SHOW — the one question asked before the lobby.
  *
- * The show scopes the entire episode shelf, so it is a decision worth a screen
- * rather than a control tucked into the corner of one. It is asked exactly
- * once: the choice is persisted (see loadGroupId in the store) and this screen
- * is skipped on every later sign-in. Changing it afterwards lives in the
- * account menu, which is where a preference belongs.
+ * The show decides who is in your episodes, never which episodes you get:
+ * every show plays the same lineup (First Day plus whatever topics the admin
+ * has published), recast with that show's characters. So every tile is
+ * playable, and the count on each is the same.
  *
  * Rendered from src/content/characterGroups.ts, so it does not know how many
  * shows exist. The grid is 2-up and 4-up; a fifth show needs no change here.
- *
- * WHY THE AVAILABILITY LABEL
- * Three of the four shows currently have no playable episode — every one of
- * their entries is an authoring stub. Picking one of those lands you on a hero
- * whose only button reads "Episode in authoring", which is a poor thing to do
- * to someone on their first screen. They stay selectable, because the artwork
- * and cast are real and worth browsing; they just say so up front. The label
- * is derived, not authored, so it disappears on its own as episodes unlock.
  * ========================================================================== */
 
 const EASE = [0.16, 1, 0.3, 1] as const
 
-/** How much of this show you can actually play right now. */
-const availability = (group: CharacterGroup) => {
-  const playable = playableCount(group.id)
-  return playable === 0
-    ? { playable, label: 'In production', open: false }
-    : { playable, label: `${playable} episode${playable === 1 ? '' : 's'} ready`, open: true }
-}
-
 export function PickShow() {
-  const { dispatch } = useGame()
+  const { state, dispatch } = useGame()
 
   const choose = (groupId: string) => {
     dispatch({ type: 'SELECT_GROUP', groupId })
@@ -58,16 +39,17 @@ export function PickShow() {
           <Eyebrow>before you start</Eyebrow>
           <h1 className="t-display mt-3 text-[clamp(2.25rem,6vw,3.75rem)] text-bone">Pick your show</h1>
           <p className="mt-4 max-w-xl font-sans text-[15.5px] font-light leading-relaxed text-bone-dim">
-            Your training plays out as episodes of a show you already know. Pick the cast you want
-            running your onboarding. You can change it any time from your account menu.
+            Your training plays out as episodes of a show you already know. Every show covers the same topics — pick
+            the cast you want running your onboarding. You can change it any time from your account menu.
           </p>
         </motion.div>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {characterGroups.map((group, i) => {
             const cast = groupCast(group)
-            const featured = featuredEpisode(group.id)
-            const { label, open } = availability(group)
+            const lineup = lineupFor(group.id, state.published)
+            const featured = lineup[0]?.episode
+            const count = lineup.length
 
             return (
               <motion.button
@@ -112,9 +94,8 @@ export function PickShow() {
                   <p className="mt-1.5 min-h-[4.2em] font-sans text-[12.5px] font-light leading-snug text-bone-dim">
                     {group.tagline}
                   </p>
-                  <div className="mt-3 flex items-center gap-1.5 font-sans text-[12px] text-bone-faint">
-                    {!open && <Lock size={11} />}
-                    {label}
+                  <div className="mt-3 font-sans text-[12px] text-bone-faint">
+                    {count} episode{count === 1 ? '' : 's'}
                   </div>
                 </div>
               </motion.button>

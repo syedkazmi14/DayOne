@@ -7,5 +7,9 @@ scripts/.out
 *.log
 tsconfig.tsbuildinfo
 # generated assets + content database written by server/mediaServer.mjs
-storage
-data
+# (anchored to the repo root — unanchored "data" also matched src/data/,
+# silently hiding new files added there, e.g. src/data/episodeStore.ts)
+/storage
+/data
+# local sample documents for trying Studio ingest
+test-docs

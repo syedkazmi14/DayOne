@@ -15,9 +15,16 @@
  * keyframe, so a clip keeps the composition the Studio already generated. The
  * story is not the model's business — it receives a motion prompt for one shot.
  *
- * Storage is local disk (ASSET_ROOT, default ./storage) served at
- * /api/media/assets/<key>. The keys are object-store keys on purpose: pointing
- * putObject() at S3/R2/GCS is a change to one function, not to the app.
+ * Storage is Supabase when SUPABASE_URL + SUPABASE_SECRET_KEY are set: media
+ * goes to a public Storage bucket (the browser loads it from the bucket's URL),
+ * extracted policy text to a private one, and structured rows (published
+ * episodes, uploaded docs, knowledge) to Postgres tables with RLS on and no
+ * policies — only this process, holding the secret key, can touch them.
+ * Without Supabase it is local disk (ASSET_ROOT, default ./storage, served at
+ * /api/media/assets/<key>) plus a SQLite file. Same keys, same routes.
+ *
+ * Anything already in storage is reused: asking for a scene image or clip that
+ * exists returns the stored file unless the request says `force: true`.
  *
  * It also backs src/data/contentStore.ts's 'db' tier: uploaded documents and
  * the knowledge the Studio extracts from them, in a small SQLite file
@@ -38,7 +45,11 @@
  *   VOICE_PROXY_URL        default http://localhost:$VOICE_PROXY_PORT (8787);
  *                          dialogue audio is rendered THROUGH the voice proxy,
  *                          so ELEVENLABS_API_KEY stays in exactly one process
- *   ASSET_ROOT             default ./storage
+ *   SUPABASE_URL           https://<ref>.supabase.co — with the secret key,
+ *   SUPABASE_SECRET_KEY    switches storage + content to Supabase (server only)
+ *   SUPABASE_BUCKET        default dayone-assets (public: images, clips, audio)
+ *   SUPABASE_PRIVATE_BUCKET default dayone-private (extracted policy text)
+ *   ASSET_ROOT             default ./storage (local fallback)
  *   MEDIA_SERVER_PORT      default 8788
  *
  * ROUTES
@@ -53,11 +64,16 @@
  *   POST /api/media/content/docs       one SourceDoc -> { ok }
  *   GET  /api/media/content/knowledge  -> { items: KnowledgeItem[] }
  *   POST /api/media/content/knowledge  { items: KnowledgeItem[] } -> { ok, saved }
+ *   GET  /api/media/episodes           -> { episodes: Episode[] }  (drafts included)
+ *   POST /api/media/episodes           { episode } -> { ok }
+ *   DELETE /api/media/episodes/:id     -> { ok }
+ *   DELETE /api/media/content/docs/:id -> { ok }   (row + its private text)
+ *   POST /api/media/content/knowledge/remove  { ids: string[] } -> { ok, removed }
  * ========================================================================== */
 
 import { createServer } from 'node:http'
 import { createReadStream, mkdirSync } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
@@ -74,7 +90,11 @@ const ASSET_ROOT = path.resolve(ROOT, process.env.ASSET_ROOT ?? 'storage')
 const EXTRA_ORIGIN = process.env.MEDIA_SERVER_ORIGIN ?? ''
 /** Structured content (uploaded docs + extracted knowledge), separate from
  *  the binary asset store above — a row, not an object, is the natural unit. */
-const CONTENT_DB_PATH = path.resolve(ROOT, 'data/content.db')
+const CONTENT_DB_PATH = path.resolve(ROOT, process.env.CONTENT_DB_PATH ?? 'data/content.db')
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').replace(/\/$/, '')
+const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY ?? ''
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET ?? 'dayone-assets'
+const SUPABASE_PRIVATE_BUCKET = process.env.SUPABASE_PRIVATE_BUCKET ?? 'dayone-private'
 
 const PUBLIC_PREFIX = '/api/media/assets/'
 const UPSTREAM_TIMEOUT_MS = 90_000
@@ -113,7 +133,7 @@ function cors(req, res) {
   if (allowed && origin) res.setHeader('access-control-allow-origin', origin)
   res.setHeader('vary', 'origin')
   res.setHeader('access-control-allow-headers', 'content-type, range')
-  res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS')
+  res.setHeader('access-control-allow-methods', 'GET,POST,DELETE,OPTIONS')
   return allowed
 }
 
@@ -161,44 +181,164 @@ const inRoot = (key) => {
   return file.startsWith(ASSET_ROOT + path.sep) ? file : null
 }
 
-/** The one function an object-store adapter would replace. */
-async function putObject(key, buffer) {
+/* Supabase, when configured. The secret key only ever travels from this
+ * process to Supabase; responses to the browser carry public URLs and rows. */
+const supabase = !!(SUPABASE_URL && SUPABASE_KEY)
+const supaHeaders = (extra = {}) => ({
+  apikey: SUPABASE_KEY,
+  // Opaque sb_secret_ keys go in apikey alone; a legacy service_role JWT is also a bearer token.
+  ...(SUPABASE_KEY.startsWith('sb_') ? {} : { authorization: `Bearer ${SUPABASE_KEY}` }),
+  ...extra,
+})
+const encodeKey = (key) => key.split('/').map(encodeURIComponent).join('/')
+const publicUrl = (key) => `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeKey(key)}`
+
+async function supa(route, init = {}) {
+  const res = await upstream(`${SUPABASE_URL}${route}`, { ...init, headers: supaHeaders(init.headers) })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`Supabase ${init.method ?? 'GET'} ${route.split('?')[0]} failed (${res.status}) ${detail.slice(0, 160)}`)
+  }
+  return res
+}
+
+const mimeOf = (key) => TYPES[path.extname(key).toLowerCase()] ?? 'application/octet-stream'
+
+/**
+ * Store bytes under an object key and return the URL the browser loads.
+ * `private` objects (extracted policy text) never get a public URL.
+ */
+async function putObject(key, buffer, { private: isPrivate = false } = {}) {
+  if (supabase) {
+    const bucket = isPrivate ? SUPABASE_PRIVATE_BUCKET : SUPABASE_BUCKET
+    await supa(`/storage/v1/object/${bucket}/${encodeKey(key)}`, {
+      method: 'POST',
+      headers: { 'content-type': mimeOf(key).split(';')[0], 'x-upsert': 'true' },
+      body: buffer,
+    })
+    // Re-renders overwrite the same key; the version stops the CDN serving the old file.
+    return isPrivate ? null : `${publicUrl(key)}?v=${Date.now()}`
+  }
   const file = path.join(ASSET_ROOT, key)
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, buffer)
   return `${PUBLIC_PREFIX}${key}`
 }
 
-/* ------------------------------------------------------------- content db */
+/** Bytes of a stored object, or null when it is not there. */
+async function getObject(key) {
+  if (supabase) {
+    const res = await upstream(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeKey(key)}`, { headers: supaHeaders() })
+    return res.ok ? Buffer.from(await res.arrayBuffer()) : null
+  }
+  const file = inRoot(key)
+  if (!file) return null
+  return readFile(file).catch(() => null)
+}
+
+/** The URL of a stored public object, or null — how generation skips work already paid for. */
+async function existingObject(key) {
+  if (supabase) {
+    const res = await upstream(publicUrl(key), { method: 'HEAD' }).catch(() => null)
+    return res?.ok ? publicUrl(key) : null
+  }
+  const file = inRoot(key)
+  return file && (await stat(file).catch(() => null)) ? `${PUBLIC_PREFIX}${key}` : null
+}
+
+/** Delete a stored object. One that is already gone is not an error. */
+async function removeObject(key, { private: isPrivate = false } = {}) {
+  if (supabase) {
+    const bucket = isPrivate ? SUPABASE_PRIVATE_BUCKET : SUPABASE_BUCKET
+    await upstream(`${SUPABASE_URL}/storage/v1/object/${bucket}/${encodeKey(key)}`, { method: 'DELETE', headers: supaHeaders() }).catch(() => null)
+    return
+  }
+  const file = inRoot(key)
+  if (file) await unlink(file).catch(() => {})
+}
+
+/* ---------------------------------------------------------------- content */
 
 /**
- * Uploaded source documents and the knowledge extracted from them, so a
- * Studio session survives a reload. Backed by node:sqlite (built into Node
- * 22.5+, no dependency) rather than the object store above — this is a
- * handful of small JSON rows queried by id, not a binary blob served by URL.
+ * Structured rows: uploaded source documents, the knowledge extracted from
+ * them, and episodes the Studio saved. Each row is the domain object as JSON,
+ * keyed by its id — this server has no opinions about what those shapes
+ * contain (episodes are re-validated by the reducer when they load).
  *
- * One file, two tables, each row a JSON blob keyed by the domain id. This
- * mirrors src/data/contentStore.ts's ContentStore shape exactly, so the
- * server has no opinions about what a KnowledgeItem or SourceDoc contains.
+ * Supabase Postgres when configured; otherwise a local node:sqlite file
+ * (built into Node 22.5+, no dependency) with the same three tables.
  */
-mkdirSync(path.dirname(CONTENT_DB_PATH), { recursive: true })
-const contentDb = new DatabaseSync(CONTENT_DB_PATH)
-contentDb.exec(`
-  CREATE TABLE IF NOT EXISTS source_docs (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS knowledge_items (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
-`)
+const TABLES = ['source_docs', 'knowledge_items', 'episodes']
 
-/** node:sqlite prepares against a fixed SQL string, so each table gets its own statement. */
-const upsertSourceDoc = contentDb.prepare(
-  'INSERT INTO source_docs (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
-)
-const upsertKnowledgeItem = contentDb.prepare(
-  'INSERT INTO knowledge_items (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
-)
-const selectSourceDocs = contentDb.prepare('SELECT data FROM source_docs ORDER BY updated_at ASC')
-const selectKnowledgeItems = contentDb.prepare('SELECT data FROM knowledge_items ORDER BY updated_at ASC')
+function supabaseRows() {
+  return {
+    kind: 'supabase',
+    async list(table) {
+      const res = await supa(`/rest/v1/${table}?select=data&order=updated_at.asc`)
+      return (await res.json()).map((r) => r.data)
+    },
+    async upsert(table, records) {
+      if (!records.length) return
+      const updated_at = new Date().toISOString()
+      await supa(`/rest/v1/${table}?on_conflict=id`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(
+          records.map((r) => ({ id: r.id, data: r.data, updated_at, ...(table === 'episodes' ? { status: r.status } : {}) })),
+        ),
+      })
+    },
+    async remove(table, id) {
+      await supa(`/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: { prefer: 'return=minimal' } })
+    },
+  }
+}
 
-const listRows = (stmt) => stmt.all().map((r) => JSON.parse(r.data))
+function sqliteRows() {
+  mkdirSync(path.dirname(CONTENT_DB_PATH), { recursive: true })
+  const db = new DatabaseSync(CONTENT_DB_PATH)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS source_docs (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS knowledge_items (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS episodes (id TEXT PRIMARY KEY, status TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+  `)
+  // node:sqlite prepares against a fixed SQL string, so each table gets its own statements.
+  const stmts = Object.fromEntries(
+    TABLES.map((t) => [
+      t,
+      {
+        list: db.prepare(`SELECT data FROM ${t} ORDER BY updated_at ASC`),
+        upsert:
+          t === 'episodes'
+            ? db.prepare(
+                'INSERT INTO episodes (id, status, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data, updated_at = excluded.updated_at',
+              )
+            : db.prepare(
+                `INSERT INTO ${t} (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+              ),
+        remove: db.prepare(`DELETE FROM ${t} WHERE id = ?`),
+      },
+    ]),
+  )
+  return {
+    kind: 'sqlite',
+    async list(table) {
+      return stmts[table].list.all().map((r) => JSON.parse(r.data))
+    },
+    async upsert(table, records) {
+      const now = new Date().toISOString()
+      for (const r of records) {
+        if (table === 'episodes') stmts[table].upsert.run(r.id, r.status, JSON.stringify(r.data), now)
+        else stmts[table].upsert.run(r.id, JSON.stringify(r.data), now)
+      }
+    },
+    async remove(table, id) {
+      stmts[table].remove.run(id)
+    },
+  }
+}
+
+const rows = supabase ? supabaseRows() : sqliteRows()
 
 async function serveAsset(req, res, key) {
   const file = inRoot(key)
@@ -360,7 +500,7 @@ async function advanceVideoJob(job) {
   return job
 }
 
-const publicJob = (id, j) => ({ jobId: id, status: j.status, url: j.url, storageKey: j.storageKey, error: j.error })
+const publicJob = (id, j) => ({ jobId: id, status: j.status, url: j.url, storageKey: j.storageKey, error: j.error, reused: j.reused })
 
 /* ------------------------------------------------------------------ routes */
 
@@ -381,18 +521,40 @@ const server = createServer(async (req, res) => {
         video: { configured: !!TOKEN, provider: 'replicate', model: VIDEO_MODEL, mode: 'image-to-video' },
         image: { configured: !!TOKEN, provider: 'replicate', model: IMAGE_MODEL },
         audio: { configured: await voiceConfigured(), provider: 'elevenlabs via voice proxy' },
-        // Content persistence needs nothing beyond this process being up — no
-        // token, no external account — so it is configured whenever this
-        // server answers at all.
-        content: { configured: true, kind: 'sqlite' },
-        storage: { kind: 'local-disk', layout: 'company/{knowledge,episodes/<id>/{videos,backgrounds,audio}}' },
+        // Content persistence needs no generation token: Supabase when it is
+        // configured, the local SQLite file otherwise — so it is available
+        // whenever this server answers at all.
+        content: { configured: true, kind: rows.kind, episodes: true },
+        storage: {
+          kind: supabase ? 'supabase' : 'local-disk',
+          layout: 'company/{knowledge,episodes/<id>/{videos,backgrounds,audio}}',
+          ...(supabase ? { bucket: SUPABASE_BUCKET } : {}),
+        },
       })
 
     if (req.method === 'GET' && p === '/api/media/content/docs')
-      return json(res, 200, { docs: listRows(selectSourceDocs) })
+      return json(res, 200, { docs: await rows.list('source_docs') })
 
     if (req.method === 'GET' && p === '/api/media/content/knowledge')
-      return json(res, 200, { items: listRows(selectKnowledgeItems) })
+      return json(res, 200, { items: await rows.list('knowledge_items') })
+
+    if (req.method === 'GET' && p === '/api/media/episodes')
+      return json(res, 200, { episodes: await rows.list('episodes') })
+
+    if (req.method === 'DELETE' && p.startsWith('/api/media/episodes/')) {
+      const id = safeId(decodeURIComponent(p.slice('/api/media/episodes/'.length)))
+      if (!id) return json(res, 400, { error: 'invalid_request' })
+      await rows.remove('episodes', id)
+      return json(res, 200, { ok: true })
+    }
+
+    if (req.method === 'DELETE' && p.startsWith('/api/media/content/docs/')) {
+      const id = safeId(decodeURIComponent(p.slice('/api/media/content/docs/'.length)))
+      if (!id) return json(res, 400, { error: 'invalid_request' })
+      await rows.remove('source_docs', id)
+      await removeObject(keys.knowledge(id), { private: true })
+      return json(res, 200, { ok: true })
+    }
 
     if (req.method === 'GET' && p.startsWith(PUBLIC_PREFIX))
       return serveAsset(req, res, decodeURIComponent(p.slice(PUBLIC_PREFIX.length)))
@@ -412,7 +574,8 @@ const server = createServer(async (req, res) => {
       const text = str(body.text, MAX_BODY)
       if (!docId || !text) return json(res, 400, { error: 'invalid_request' })
       const storageKey = keys.knowledge(docId)
-      return json(res, 200, { url: await putObject(storageKey, Buffer.from(text, 'utf8')), storageKey })
+      const stored = await putObject(storageKey, Buffer.from(text, 'utf8'), { private: true })
+      return json(res, 200, { ...(stored ? { url: stored } : {}), storageKey })
     }
 
     /* Structured content: a whole SourceDoc / KnowledgeItem, stored as-is —
@@ -420,21 +583,34 @@ const server = createServer(async (req, res) => {
     if (p === '/api/media/content/docs') {
       const id = safeId(body.id)
       if (!id || typeof body.name !== 'string') return json(res, 400, { error: 'invalid_request' })
-      upsertSourceDoc.run(id, JSON.stringify(body), new Date().toISOString())
+      await rows.upsert('source_docs', [{ id, data: body }])
       return json(res, 200, { ok: true })
     }
 
     if (p === '/api/media/content/knowledge') {
       if (!Array.isArray(body.items)) return json(res, 400, { error: 'invalid_request' })
-      const now = new Date().toISOString()
-      let saved = 0
-      for (const item of body.items) {
-        const id = safeId(item?.id)
-        if (!id) continue
-        upsertKnowledgeItem.run(id, JSON.stringify(item), now)
-        saved++
-      }
-      return json(res, 200, { ok: true, saved })
+      const records = body.items.filter((item) => safeId(item?.id)).map((item) => ({ id: item.id, data: item }))
+      await rows.upsert('knowledge_items', records)
+      return json(res, 200, { ok: true, saved: records.length })
+    }
+
+    if (p === '/api/media/content/knowledge/remove') {
+      if (!Array.isArray(body.ids)) return json(res, 400, { error: 'invalid_request' })
+      const ids = body.ids.map(safeId).filter(Boolean)
+      for (const id of ids) await rows.remove('knowledge_items', id)
+      return json(res, 200, { ok: true, removed: ids.length })
+    }
+
+    /* An episode the Studio saved (draft or live). Shape-checked only: every
+     * client re-runs validateEpisode before an episode can be played. */
+    if (p === '/api/media/episodes') {
+      const episode = body.episode
+      const id = safeId(episode?.id)
+      const status = episode?.provenance?.status
+      if (!id || (status !== 'draft' && status !== 'published') || !episode.scenes || typeof episode.scenes !== 'object')
+        return json(res, 400, { error: 'invalid_request' })
+      await rows.upsert('episodes', [{ id, status, data: episode }])
+      return json(res, 200, { ok: true })
     }
 
     if (p === '/api/media/image') {
@@ -443,11 +619,19 @@ const server = createServer(async (req, res) => {
       const sceneId = safeId(body.sceneId)
       const prompt = str(body.prompt, 2000)
       if (!episodeId || !sceneId || !prompt) return json(res, 400, { error: 'invalid_request' })
-      let prediction = await createPrediction(
-        IMAGE_MODEL,
-        { prompt, aspect_ratio: '16:9', output_format: 'jpg', output_quality: 85, megapixels: '1', num_outputs: 1 },
-        60,
-      )
+      const storageKey = keys.image(episodeId, sceneId)
+      const existing = body.force === true ? null : await existingObject(storageKey)
+      if (existing) return json(res, 200, { url: existing, storageKey, reused: true })
+      // No synchronous wait: creation is serialised, so waiting inside the queue
+      // held every other scene back until this one finished (~1 image a minute).
+      let prediction = await createPrediction(IMAGE_MODEL, {
+        prompt,
+        aspect_ratio: '16:9',
+        output_format: 'jpg',
+        output_quality: 85,
+        megapixels: '1',
+        num_outputs: 1,
+      })
       const deadline = Date.now() + IMAGE_WAIT_MS
       while (!TERMINAL.has(prediction.status)) {
         if (Date.now() > deadline) return json(res, 504, { error: 'timeout', message: 'Scene image timed out.' })
@@ -458,7 +642,6 @@ const server = createServer(async (req, res) => {
         return json(res, 502, { error: 'generation_failed', message: `Image generation ${prediction.status}${reason(prediction)}` })
       const imageUrl = outputUrl(prediction.output)
       if (!imageUrl) return json(res, 502, { error: 'no_image', message: 'Replicate returned no image.' })
-      const storageKey = keys.image(episodeId, sceneId)
       return json(res, 200, { url: await putObject(storageKey, await download(imageUrl)), storageKey })
     }
 
@@ -468,20 +651,24 @@ const server = createServer(async (req, res) => {
       const sceneId = safeId(body.sceneId)
       const prompt = str(body.prompt, 2000)
       if (!episodeId || !sceneId || !prompt) return json(res, 400, { error: 'invalid_request' })
-      const imageKey = typeof body.imageKey === 'string' && KEYFRAME_KEY.test(body.imageKey) ? body.imageKey : null
-      const file = imageKey && inRoot(imageKey)
-      if (!file)
-        return json(res, 400, { error: 'image_required', message: 'Wan 2.2 I2V animates a stored scene image — generate the scene image first.' })
-      let bytes
-      try {
-        bytes = await readFile(file)
-      } catch {
-        return json(res, 404, { error: 'image_missing', message: 'The scene image is not in storage.' })
+      // A clip already in storage is reused: a re-render is a paid prediction, so it has to be asked for.
+      const videoKey = keys.video(episodeId, sceneId)
+      const existing = body.force === true ? null : await existingObject(videoKey)
+      if (existing) {
+        const id = randomUUID()
+        const job = { status: 'ready', url: existing, storageKey: videoKey, episodeId, sceneId, finishing: false, misses: 0, reused: true }
+        jobs.set(id, job)
+        return json(res, 202, publicJob(id, job))
       }
+      const imageKey = typeof body.imageKey === 'string' && KEYFRAME_KEY.test(body.imageKey) ? body.imageKey : null
+      if (!imageKey)
+        return json(res, 400, { error: 'image_required', message: 'Wan 2.2 I2V animates a stored scene image — generate the scene image first.' })
+      const bytes = await getObject(imageKey)
+      if (!bytes) return json(res, 404, { error: 'image_missing', message: 'The scene image is not in storage.' })
       if (bytes.length > MAX_KEYFRAME_BYTES) return json(res, 413, { error: 'image_too_large', message: 'Scene image exceeds 1 MB.' })
       const durationSec = clamp(Number(body.durationSec) || 5, 5, 7.5)
       const prediction = await createPrediction(VIDEO_MODEL, {
-        image: `data:${TYPES[path.extname(file).toLowerCase()]};base64,${bytes.toString('base64')}`,
+        image: `data:${mimeOf(imageKey)};base64,${bytes.toString('base64')}`,
         prompt,
         num_frames: clamp(Math.round(durationSec * WAN_FPS) + 1, 81, 121),
         frames_per_second: WAN_FPS,
@@ -518,7 +705,7 @@ const server = createServer(async (req, res) => {
     const message = String(e?.message ?? e)
     console.warn(`[media] ${req.method} ${p} failed: ${message.slice(0, 240)}`)
     if (message === 'invalid json') return json(res, 400, { error: 'invalid_json' })
-    return json(res, 502, { error: 'upstream_failed', message: message.startsWith('Replicate') ? message : 'Asset generation failed upstream.' })
+    return json(res, 502, { error: 'upstream_failed', message: /^(Replicate|Supabase)/.test(message) ? message : 'Asset generation failed upstream.' })
   }
 })
 
@@ -526,7 +713,8 @@ server.listen(PORT, () => {
   console.log(
     `[media] server on http://localhost:${PORT}  ` +
       (TOKEN ? `replicate configured · video ${VIDEO_MODEL} (image-to-video) · image ${IMAGE_MODEL}` : 'REPLICATE_API_TOKEN not set — Studio will use procedural previs') +
-      `  · storage ${path.relative(ROOT, ASSET_ROOT) || '.'}/` +
-      `  · content ${path.relative(ROOT, CONTENT_DB_PATH)}`,
+      (supabase
+        ? `  · storage + content: supabase (${new URL(SUPABASE_URL).host}, bucket ${SUPABASE_BUCKET})`
+        : `  · storage ${path.relative(ROOT, ASSET_ROOT) || '.'}/  · content ${path.relative(ROOT, CONTENT_DB_PATH)}`),
   )
 })

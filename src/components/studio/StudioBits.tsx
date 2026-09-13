@@ -138,14 +138,12 @@ export function StudioRail({
               >
                 {inner}
                 {active && (
-                  // A sliding underline reads as "you are here" without the
-                  // glow the active dot used to carry — that glow was cut on
-                  // request and should not sneak back in through a new shape.
-                  <motion.span
-                    layoutId="studio-rail-active"
-                    className="absolute inset-x-2.5 -bottom-px h-px bg-signal"
-                    transition={{ duration: 0.35, ease: EASE }}
-                  />
+                  // A plain underline, deliberately not a shared-layout one:
+                  // App.tsx swaps screens with AnimatePresence mode="wait", and
+                  // a layoutId animation inside the outgoing subtree never
+                  // settles, so leaving the Studio hung on its own exit and the
+                  // next screen never mounted.
+                  <span className="absolute inset-x-2.5 -bottom-px h-px bg-signal" />
                 )}
               </button>
             )}

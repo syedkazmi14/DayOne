@@ -1,20 +1,61 @@
 import { motion } from 'framer-motion'
-import { Coins, Flame, Shield, Zap } from 'lucide-react'
 import { wagerOptions, type WagerTier } from '@/engine/risk'
 
 /* ============================================================================
- * WAGER — three bets, readable at a glance.
+ * WAGER — four cards, laid out low to high.
  *
  * VIRTUAL CREDITS ONLY. The player's own decision settles the bet, never
  * chance and never a model. The mastery estimate is recorded by the reducer
  * and only revealed after the world reacts, so nothing here anchors the call.
+ *
+ * Each option is a playing card: the multiplier is the rank, the stake sits
+ * under it, and the suit follows bridge order (clubs < diamonds < hearts <
+ * spades) so the lowest suit is the pass and the highest is all in. Passing is
+ * a 1× card like the others, because it is an equally valid call.
  * ========================================================================== */
 
-const LOOK: Record<WagerTier, { Icon: typeof Shield; accent: string }> = {
-  safe: { Icon: Shield, accent: '#54D1A0' },
-  risky: { Icon: Flame, accent: '#F5A524' },
-  allin: { Icon: Zap, accent: '#FF4D4D' },
+type Suit = 'clubs' | 'diamonds' | 'hearts' | 'spades'
+
+const SUIT_COLOR: Record<Suit, string> = {
+  clubs: 'text-bone',
+  diamonds: 'text-[#E0625C]',
+  hearts: 'text-[#E0625C]',
+  spades: 'text-bone',
 }
+
+function SuitMark({ suit, className = '' }: { suit: Suit; className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={`fill-current ${SUIT_COLOR[suit]} ${className}`}>
+      {suit === 'spades' && (
+        <path d="M12 2C9.2 5.9 4 8.9 4 13.4a4 4 0 0 0 6.6 3.1L9.2 22h5.6l-1.4-5.5A4 4 0 0 0 20 13.4C20 8.9 14.8 5.9 12 2z" />
+      )}
+      {suit === 'hearts' && <path d="M12 21s-8.5-5.4-8.5-11.4A4.7 4.7 0 0 1 12 7a4.7 4.7 0 0 1 8.5 2.6C20.5 15.6 12 21 12 21z" />}
+      {suit === 'diamonds' && <path d="M12 2l7.2 10L12 22 4.8 12z" />}
+      {suit === 'clubs' && (
+        <>
+          <circle cx="12" cy="7" r="4" />
+          <circle cx="7" cy="13.2" r="4" />
+          <circle cx="17" cy="13.2" r="4" />
+          <path d="M10.9 12h2.2l1.7 10H9.2z" />
+        </>
+      )}
+    </svg>
+  )
+}
+
+interface Card {
+  key: string
+  suit: Suit
+  multiplier: number
+  stake: string
+  weight: string
+  ariaLabel: string
+  disabled?: boolean
+  onPick: () => void
+}
+
+const SUIT: Record<WagerTier, Suit> = { safe: 'diamonds', risky: 'hearts', allin: 'spades' }
+const WEIGHT: Record<WagerTier, string> = { safe: 'font-normal', risky: 'font-medium', allin: 'font-semibold' }
 
 export function RiskTerminal({
   credits,
@@ -25,7 +66,27 @@ export function RiskTerminal({
   onStake: (tier: WagerTier) => void
   onSkip: () => void
 }) {
-  const options = wagerOptions(credits)
+  const cards: Card[] = [
+    {
+      key: 'none',
+      suit: 'clubs',
+      multiplier: 1,
+      stake: 'No stake',
+      weight: 'font-light',
+      ariaLabel: 'No bet, 1×',
+      onPick: onSkip,
+    },
+    ...wagerOptions(credits).map((o) => ({
+      key: o.tier,
+      suit: SUIT[o.tier],
+      multiplier: o.multiplier,
+      stake: `Stake ${o.stake.toLocaleString()}`,
+      weight: WEIGHT[o.tier],
+      ariaLabel: `${o.label} bet, ${o.multiplier}×, stake ${o.stake.toLocaleString()}`,
+      disabled: o.stake <= 0 || o.stake > credits,
+      onPick: () => onStake(o.tier),
+    })),
+  ]
 
   return (
     <motion.div
@@ -33,59 +94,47 @@ export function RiskTerminal({
       animate={{ opacity: 1 }}
       className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto no-scrollbar px-4 py-[8vh]"
     >
-      <div className="absolute inset-0 bg-ink-900/80 backdrop-blur-md" />
+      <div className="absolute inset-0 bg-ink-900/80 backdrop-blur-[3px]" />
 
       <motion.div
-        initial={{ opacity: 0, y: 22 }}
+        initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-        className="relative my-auto w-full max-w-2xl"
+        className="relative my-auto w-full max-w-3xl"
       >
-        <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-          <h3 className="t-display text-4xl text-bone sm:text-5xl">MAKE YOUR CALL</h3>
-          <span className="inline-flex items-center gap-2 rounded border border-signal/30 px-3 py-1.5 font-mono text-sm tabular-nums text-signal">
-            <Coins size={13} />
-            {credits.toLocaleString()}
-          </span>
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-2 border-b border-bone/10 pb-4">
+          <div>
+            <p className="mb-1.5 font-sans text-[13px] text-bone-faint">Before you answer</p>
+            <h3 className="font-sans text-[28px] font-semibold leading-tight tracking-[-0.01em] text-bone sm:text-[32px]">
+              Make your call
+            </h3>
+          </div>
+          <p className="font-sans text-[14px] text-bone-dim">
+            Balance <span className="ml-1 font-medium tabular-nums text-bone">{credits.toLocaleString()}</span>
+          </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 sm:gap-3">
-          {options.map((o, i) => {
-            const { Icon, accent } = LOOK[o.tier]
-            const share = credits ? o.stake / credits : 0
-            return (
-              <motion.button
-                key={o.tier}
-                initial={{ opacity: 0, y: 18 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.08 + i * 0.07 }}
-                onClick={() => onStake(o.tier)}
-                disabled={o.stake <= 0 || o.stake > credits}
-                className="glass-strong flex min-w-0 flex-col items-center gap-3 border px-2 py-6 transition-[transform,background-color] duration-300 hover:-translate-y-1 hover:bg-bone/[0.04] disabled:pointer-events-none disabled:opacity-30 sm:py-8"
-                style={{ borderColor: `${accent}45` }}
-              >
-                <Icon size={26} style={{ color: accent }} />
-                <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-bone">{o.label}</span>
-                <span className="font-sans text-[34px] font-black leading-none tabular-nums sm:text-[46px]" style={{ color: accent }}>
-                  {o.multiplier}×
-                </span>
-                <span className="block h-[3px] w-3/4 overflow-hidden rounded rail">
-                  <span className="block h-full rounded" style={{ width: `${Math.max(4, share * 100)}%`, background: accent }} />
-                </span>
-                <span className="font-mono text-[10px] tabular-nums text-bone-faint">−{o.stake.toLocaleString()}</span>
-              </motion.button>
-            )
-          })}
-        </div>
+        <div className="mx-auto grid max-w-[22rem] grid-cols-2 gap-3 sm:max-w-none sm:grid-cols-4 sm:gap-4">
+          {cards.map((c, i) => (
+            <motion.button
+              key={c.key}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.06 + i * 0.05 }}
+              onClick={c.onPick}
+              disabled={c.disabled}
+              aria-label={c.ariaLabel}
+              className="relative flex aspect-[5/7] min-w-0 flex-col items-center justify-center rounded border border-bone/15 bg-ink-800 shadow-[0_1px_0_rgba(237,233,226,0.04)_inset] transition-[transform,border-color] duration-200 hover:-translate-y-1 hover:border-bone/40 focus-visible:border-signal/70 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-35"
+            >
+              <SuitMark suit={c.suit} className="absolute left-3 top-3 h-4 w-4 sm:left-3.5 sm:top-3.5" />
+              <SuitMark suit={c.suit} className="absolute bottom-3 right-3 h-4 w-4 rotate-180 sm:bottom-3.5 sm:right-3.5" />
 
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <button
-            onClick={onSkip}
-            className="px-2 py-2 font-mono text-[10px] uppercase tracking-ultra text-bone-dim transition-colors hover:text-bone"
-          >
-            no bet
-          </button>
-          <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint">virtual credits · no real money</span>
+              <span className={`font-sans text-[40px] leading-none tabular-nums text-bone sm:text-[44px] ${c.weight}`}>
+                {c.multiplier}×
+              </span>
+              <span className="mt-3 font-sans text-[12.5px] tabular-nums text-bone-faint">{c.stake}</span>
+            </motion.button>
+          ))}
         </div>
       </motion.div>
     </motion.div>
